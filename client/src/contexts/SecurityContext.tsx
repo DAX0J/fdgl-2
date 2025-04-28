@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import * as firebaseAuth from '@/lib/firebaseAuth';
-import { User } from 'firebase/auth';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { User as FirebaseUser } from 'firebase/auth';
+import * as AuthService from '@/lib/firebaseAuth';
 
-// نوع حالة الأمان
+// تعريف نوع المستخدم
+export interface User {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  isAdmin: boolean;
+}
+
+// تعريف حالة الأمان
 interface SecurityState {
   // حالة المصادقة
   isAuthenticated: boolean;
@@ -21,7 +29,7 @@ interface SecurityState {
   ipCooldown: number | null;
 }
 
-// نوع سياق الأمان
+// تعريف سياق الأمان
 interface SecurityContextType extends SecurityState {
   // وظائف المصادقة
   loginAdmin: (email: string, password: string) => Promise<boolean>;
@@ -36,149 +44,157 @@ interface SecurityContextType extends SecurityState {
   checkIPStatus: () => Promise<void>;
 }
 
-// إنشاء السياق
-const SecurityContext = createContext<SecurityContextType | undefined>(undefined);
-
-// الحالة الافتراضية
+// حالة الأمان الافتراضية
 const defaultSecurityState: SecurityState = {
   isAuthenticated: false,
   isAdmin: false,
   user: null,
-  isPasswordProtectionEnabled: true,
+  isPasswordProtectionEnabled: false,
   isUnlocked: false,
   isLoading: true,
   ipBanned: false,
   ipCooldown: null
 };
 
+// إنشاء سياق الأمان
+const SecurityContext = createContext<SecurityContextType | undefined>(undefined);
+
+// مزود سياق الأمان
 export const SecurityProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<SecurityState>(defaultSecurityState);
   
-  // تحميل الحالة الأولية
+  // التحقق من حالة المصادقة عند تحميل المكون
   useEffect(() => {
-    const loadInitialState = async () => {
+    // التحقق من حالة كلمة مرور الموقع
+    const checkSiteProtection = async () => {
       try {
-        // تحقق من حالة كلمة المرور
-        const isPasswordProtected = await firebaseAuth.isPasswordProtectionEnabled();
+        const isProtectionEnabled = await AuthService.checkPasswordProtectionEnabled();
         
-        // تحقق من حالة القفل (من الجلسة)
-        const isUnlocked = sessionStorage.getItem('siteUnlocked') === 'true';
+        const sessionUnlocked = sessionStorage.getItem('siteUnlocked') === 'true';
         
-        // تحقق من حالة عنوان IP
-        const ipStatus = await firebaseAuth.checkIPStatus();
-        
-        // تحقق من حالة المستخدم الحالي
-        const currentUser = firebaseAuth.getCurrentUser();
-        
-        setState({
-          ...state,
-          isPasswordProtectionEnabled: isPasswordProtected,
-          isUnlocked: isUnlocked || !isPasswordProtected, // فتح الموقع إذا كانت الحماية معطلة
-          isAuthenticated: !!currentUser,
-          isAdmin: !!currentUser, // في هذه الحالة البسيطة، أي مستخدم مسجل دخول هو مشرف
-          user: currentUser,
-          ipBanned: ipStatus.banned,
-          ipCooldown: ipStatus.cooldown,
-          isLoading: false
-        });
+        // تعيين حالة الحماية
+        setState(prev => ({
+          ...prev,
+          isPasswordProtectionEnabled: isProtectionEnabled,
+          isUnlocked: !isProtectionEnabled || sessionUnlocked
+        }));
       } catch (error) {
-        console.error('Error loading security state:', error);
-        setState({
-          ...state,
-          isLoading: false
-        });
+        console.error('Error checking site protection:', error);
       }
     };
     
-    loadInitialState();
-    
-    // الاستماع لتغييرات حالة المصادقة
-    const unsubscribe = firebaseAuth.subscribeToAuthChanges((user) => {
-      setState(prevState => ({
-        ...prevState,
-        isAuthenticated: !!user,
-        isAdmin: !!user,
-        user
-      }));
+    // التحقق من حالة مصادقة المستخدم
+    const unsubscribe = AuthService.onAuthStateChange((user, isAdmin) => {
+      if (user) {
+        // تحويل مستخدم Firebase إلى نموذج المستخدم الخاص بنا
+        const appUser: User = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          isAdmin
+        };
+        
+        setState(prev => ({
+          ...prev,
+          isAuthenticated: true,
+          isAdmin,
+          user: appUser,
+          isLoading: false
+        }));
+      } else {
+        setState(prev => ({
+          ...prev,
+          isAuthenticated: false,
+          isAdmin: false,
+          user: null,
+          isLoading: false
+        }));
+      }
     });
     
-    return () => unsubscribe();
+    // فحص حالة IP
+    const checkCurrentIPStatus = async () => {
+      try {
+        const ip = await AuthService.getCurrentIP();
+        const status = await AuthService.checkIPStatus(ip);
+        
+        // تحديث الحالة
+        setState(prev => ({
+          ...prev,
+          ipBanned: status.banned,
+          ipCooldown: status.cooldown
+        }));
+      } catch (error) {
+        console.error('Error checking IP status:', error);
+      }
+    };
+    
+    // تنفيذ عمليات الفحص
+    checkSiteProtection();
+    checkCurrentIPStatus();
+    
+    // تنظيف المشتركين عند إلغاء تحميل المكون
+    return () => {
+      unsubscribe();
+    };
   }, []);
   
-  // وظيفة تسجيل دخول المشرف
+  // وظيفة تسجيل دخول المسؤول
   const loginAdmin = async (email: string, password: string): Promise<boolean> => {
     try {
-      const user = await firebaseAuth.loginAdmin(email, password);
-      setState({
-        ...state,
-        isAuthenticated: true,
-        isAdmin: true,
-        user
-      });
+      await AuthService.loginAdmin(email, password);
       return true;
     } catch (error) {
-      console.error('Login error:', error);
-      // التحقق من حالة IP بعد محاولة فاشلة
-      await checkIPStatus();
+      console.error('Admin login error:', error);
       return false;
     }
   };
   
-  // وظيفة تسجيل خروج المشرف
+  // وظيفة تسجيل خروج المسؤول
   const logoutAdmin = async (): Promise<void> => {
     try {
-      await firebaseAuth.logoutAdmin();
-      setState({
-        ...state,
-        isAuthenticated: false,
-        isAdmin: false,
-        user: null
-      });
+      await AuthService.logoutAdmin();
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('Admin logout error:', error);
     }
   };
   
-  // وظيفة فتح الموقع بكلمة المرور
+  // وظيفة إلغاء قفل الموقع
   const unlockSite = async (password: string): Promise<boolean> => {
     try {
-      const isValid = await firebaseAuth.validateSitePassword(password);
-      
-      if (isValid) {
-        // تخزين حالة الفتح في الجلسة
-        sessionStorage.setItem('siteUnlocked', 'true');
-        
-        setState({
-          ...state,
-          isUnlocked: true
-        });
-      }
-      
-      // التحقق من حالة IP بعد المحاولة
-      await checkIPStatus();
-      
-      return isValid;
-    } catch (error) {
-      console.error('Error unlocking site:', error);
-      await checkIPStatus();
-      return false;
-    }
-  };
-  
-  // وظيفة تفعيل/تعطيل حماية كلمة المرور
-  const togglePasswordProtection = async (enabled: boolean): Promise<boolean> => {
-    try {
-      const success = await firebaseAuth.togglePasswordProtection(enabled);
+      const success = await AuthService.validateSitePassword(password);
       
       if (success) {
-        setState({
-          ...state,
-          isPasswordProtectionEnabled: enabled,
-          isUnlocked: !enabled || state.isUnlocked // فتح الموقع تلقائيًا إذا تم تعطيل الحماية
-        });
+        // تخزين حالة إلغاء القفل في الجلسة
+        sessionStorage.setItem('siteUnlocked', 'true');
+        
+        // تحديث الحالة
+        setState(prev => ({
+          ...prev,
+          isUnlocked: true
+        }));
       }
       
       return success;
+    } catch (error) {
+      console.error('Error unlocking site:', error);
+      return false;
+    }
+  };
+  
+  // وظيفة تبديل حماية كلمة المرور
+  const togglePasswordProtection = async (enabled: boolean): Promise<boolean> => {
+    try {
+      await AuthService.setPasswordProtection(enabled);
+      
+      // تحديث الحالة
+      setState(prev => ({
+        ...prev,
+        isPasswordProtectionEnabled: enabled,
+        isUnlocked: !enabled || prev.isUnlocked
+      }));
+      
+      return true;
     } catch (error) {
       console.error('Error toggling password protection:', error);
       return false;
@@ -188,8 +204,8 @@ export const SecurityProvider: React.FC<{ children: ReactNode }> = ({ children }
   // وظيفة تحديث كلمة مرور الموقع
   const updateSitePassword = async (newPassword: string): Promise<boolean> => {
     try {
-      const success = await firebaseAuth.updateSitePassword(newPassword);
-      return success;
+      await AuthService.setSitePassword(newPassword);
+      return true;
     } catch (error) {
       console.error('Error updating site password:', error);
       return false;
@@ -199,19 +215,21 @@ export const SecurityProvider: React.FC<{ children: ReactNode }> = ({ children }
   // وظيفة التحقق من حالة عنوان IP
   const checkIPStatus = async (): Promise<void> => {
     try {
-      const ipStatus = await firebaseAuth.checkIPStatus();
+      const ip = await AuthService.getCurrentIP();
+      const status = await AuthService.checkIPStatus(ip);
       
-      setState({
-        ...state,
-        ipBanned: ipStatus.banned,
-        ipCooldown: ipStatus.cooldown
-      });
+      // تحديث الحالة
+      setState(prev => ({
+        ...prev,
+        ipBanned: status.banned,
+        ipCooldown: status.cooldown
+      }));
     } catch (error) {
       console.error('Error checking IP status:', error);
     }
   };
   
-  // القيمة التي سيتم توفيرها لجميع المكونات الفرعية
+  // قيمة السياق المقدمة للمكونات الفرعية
   const contextValue: SecurityContextType = {
     ...state,
     loginAdmin,
@@ -229,11 +247,13 @@ export const SecurityProvider: React.FC<{ children: ReactNode }> = ({ children }
   );
 };
 
-// Hook للوصول إلى سياق الأمان
+// هوك استخدام سياق الأمان
 export const useSecurity = (): SecurityContextType => {
   const context = useContext(SecurityContext);
+  
   if (!context) {
     throw new Error('useSecurity must be used within a SecurityProvider');
   }
+  
   return context;
 };

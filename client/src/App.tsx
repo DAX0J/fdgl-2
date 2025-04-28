@@ -5,9 +5,13 @@ import { Toaster } from "@/components/ui/toaster";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import CountdownTimer from "./components/CountdownTimer";
-import UnlockSiteModal from "./components/UnlockSiteModal";
+
+// استيراد المكونات الجديدة
+import NewUnlockSiteModal from "./components/NewUnlockSiteModal";
+import { SecurityProvider } from "./contexts/SecurityContext";
 import { SiteSettingsProvider } from "./contexts/SiteSettingsContext";
 import { CartProvider } from "./contexts/CartContext";
+
 import Home from "./pages/Home";
 import Shop from "./pages/Shop";
 import ProductDetail from "./pages/ProductDetail";
@@ -18,8 +22,9 @@ import SearchResults from "./pages/SearchResults";
 import NotFound from "@/pages/not-found";
 import { lazy, Suspense, useEffect, useState } from "react";
 
-// Lazy load the admin page to improve initial load time
+// Lazy load the admin pages to improve initial load time
 const AdminPage = lazy(() => import('@/pages/AdminPage'));
+const NewAdminPage = lazy(() => import('@/pages/NewAdminPage'));
 
 function Router() {
   return (
@@ -35,7 +40,7 @@ function Router() {
         path="/gatekeeper-x9f2/*" 
         element={
           <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-            <AdminPage />
+            <NewAdminPage />
           </Suspense>
         } 
       />
@@ -102,66 +107,28 @@ function AuthInterceptor({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
-  const [checkingAuth, setCheckingAuth] = useState(true);
-
-  // Check if site protection is enabled on initial load using Firebase
-  useEffect(() => {
-    const checkProtection = async () => {
-      try {
-        // Get protection status directly from Firebase
-        const { readData } = await import('@/lib/firebase');
-        const snapshot = await readData('siteSettings/passwordProtection/enabled');
-        const isProtectionEnabled = snapshot.val();
-        
-        console.log('Protection status from Firebase:', isProtectionEnabled);
-        
-        // If protection is disabled, set site as unlocked
-        if (isProtectionEnabled === false) {
-          sessionStorage.setItem('siteUnlocked', 'true');
-        }
-      } catch (error) {
-        console.error('Error checking site protection from Firebase:', error);
-        // If we can't check protection, assume it's disabled for better UX
-        sessionStorage.setItem('siteUnlocked', 'true');
-      } finally {
-        setCheckingAuth(false);
-      }
-    };
-    
-    checkProtection();
-  }, []);
-
-  if (checkingAuth) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-black text-white">
-        <p>Loading...</p>
-      </div>
-    );
-  }
-
   return (
     <QueryClientProvider client={queryClient}>
-      <SiteSettingsProvider>
-        <CartProvider>
-          <AuthInterceptor>
-            <div className="flex flex-col min-h-screen bg-black text-white">
-              {/* Countdown Timer is now conditionally rendered:
-                  - In Home.tsx as integrated component
-                  - In other pages as popup with close button */}
-              
-              {/* Password Protection Modal */}
-              <UnlockSiteModal />
-              
-              <Navbar />
-              <main id="main-content" className="flex-grow">
-                <Router />
-              </main>
-              <Footer />
-            </div>
-            <Toaster />
-          </AuthInterceptor>
-        </CartProvider>
-      </SiteSettingsProvider>
+      {/* استخدام موفر الأمان الجديد */}
+      <SecurityProvider>
+        <SiteSettingsProvider>
+          <CartProvider>
+            <AuthInterceptor>
+              <div className="flex flex-col min-h-screen bg-black text-white">
+                {/* استخدام مكون إلغاء قفل الموقع الجديد */}
+                <NewUnlockSiteModal />
+                
+                <Navbar />
+                <main id="main-content" className="flex-grow">
+                  <Router />
+                </main>
+                <Footer />
+              </div>
+              <Toaster />
+            </AuthInterceptor>
+          </CartProvider>
+        </SiteSettingsProvider>
+      </SecurityProvider>
     </QueryClientProvider>
   );
 }

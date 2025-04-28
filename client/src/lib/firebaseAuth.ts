@@ -4,49 +4,79 @@ import {
   signInWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged,
-  User
+  User as FirebaseUser
 } from 'firebase/auth';
 import { 
   getDatabase, 
   ref, 
-  set, 
   get, 
-  update 
+  set, 
+  query, 
+  orderByChild, 
+  equalTo, 
+  push,
+  update,
+  serverTimestamp
 } from 'firebase/database';
 
-// تكوين Firebase - نفس التكوين الموجود في firebase.ts
+// تكوين Firebase
 const firebaseConfig = {
-  apiKey: "AIzaSyBoBqVU1lvtuNZ2FlAZgdYCA4BaMlNy1pw",
-  authDomain: "e2-com-10-2024-to-11-2024.firebaseapp.com",
-  databaseURL: "https://e2-com-10-2024-to-11-2024-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "e2-com-10-2024-to-11-2024",
-  storageBucket: "e2-com-10-2024-to-11-2024.firebasestorage.app",
-  messagingSenderId: "859750456330",
-  appId: "1:859750456330:web:cb21a5c394917b470713f3",
-  measurementId: "G-KLPJPL70KN"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.appspot.com`,
+  databaseURL: `https://${import.meta.env.VITE_FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// تهيئة Firebase
-const app = initializeApp(firebaseConfig);
+// تهيئة تطبيق Firebase
+let app;
+try {
+  app = initializeApp(firebaseConfig);
+} catch (error) {
+  console.error('Error initializing Firebase:', error);
+}
+
+// الحصول على خدمات Firebase
 const auth = getAuth(app);
 const database = getDatabase(app);
 
-// --------- وظائف المصادقة الأساسية ---------
+// تنسيق معرف الجهاز للاستخدام في قاعدة البيانات
+export const sanitizeIP = (ip: string): string => {
+  return ip.replace(/\./g, '_');
+};
 
 /**
- * تسجيل الدخول كمشرف باستخدام البريد الإلكتروني وكلمة المرور
+ * تسجيل الدخول كمسؤول
+ * @param email البريد الإلكتروني للمسؤول
+ * @param password كلمة المرور
+ * @returns وعد بالمستخدم إذا نجح تسجيل الدخول
  */
-export const loginAdmin = async (email: string, password: string): Promise<User> => {
+export const loginAdmin = async (email: string, password: string): Promise<FirebaseUser> => {
   try {
+    // تسجيل الدخول باستخدام Firebase Authentication
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     
-    // تخزين معلومات تسجيل الدخول للأغراض الأمنية
-    await logLoginAttempt(email, true);
+    // التحقق مما إذا كان المستخدم مسؤولاً
+    const userRef = ref(database, `users/${userCredential.user.uid}`);
+    const userSnapshot = await get(userRef);
+    
+    if (!userSnapshot.exists() || !userSnapshot.val().isAdmin) {
+      // إذا لم يكن المستخدم مسؤولاً، قم بتسجيل الخروج وارفض الوعد
+      await signOut(auth);
+      throw new Error('User is not an admin');
+    }
+    
+    // تسجيل محاولة تسجيل الدخول الناجحة
+    const ip = await getCurrentIP();
+    logLoginAttempt(email, ip, true);
     
     return userCredential.user;
   } catch (error) {
-    // تسجيل محاولة الدخول الفاشلة
-    await logLoginAttempt(email, false);
+    // تسجيل محاولة تسجيل الدخول الفاشلة
+    const ip = await getCurrentIP();
+    logLoginAttempt(email, ip, false);
+    
     throw error;
   }
 };
@@ -55,54 +85,56 @@ export const loginAdmin = async (email: string, password: string): Promise<User>
  * تسجيل الخروج
  */
 export const logoutAdmin = async (): Promise<void> => {
-  await signOut(auth);
-  // حذف أي بيانات جلسة محفوظة
-  sessionStorage.removeItem('adminAuthToken');
+  return signOut(auth);
 };
 
 /**
- * الاستماع لتغييرات حالة المصادقة
+ * فحص ما إذا كان المستخدم مسجل الدخول
+ * @param callback دالة يتم استدعاؤها عند تغيير حالة المصادقة
+ * @returns دالة لإلغاء الاشتراك
  */
-export const subscribeToAuthChanges = (callback: (user: User | null) => void): (() => void) => {
-  return onAuthStateChanged(auth, callback);
+export const onAuthStateChange = (
+  callback: (user: FirebaseUser | null, isAdmin: boolean) => void
+) => {
+  return onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      // إذا كان المستخدم موجوداً، تحقق مما إذا كان مسؤولاً
+      const userRef = ref(database, `users/${user.uid}`);
+      const userSnapshot = await get(userRef);
+      const isAdmin = userSnapshot.exists() && userSnapshot.val().isAdmin;
+      callback(user, isAdmin);
+    } else {
+      callback(null, false);
+    }
+  });
 };
 
 /**
- * الحصول على المستخدم الحالي
- */
-export const getCurrentUser = (): User | null => {
-  return auth.currentUser;
-};
-
-// --------- وظائف حماية الموقع ---------
-
-/**
- * التحقق مما إذا كانت حماية كلمة المرور مفعلة
- */
-export const isPasswordProtectionEnabled = async (): Promise<boolean> => {
-  try {
-    const snapshot = await get(ref(database, 'settings/passwordProtection/enabled'));
-    return snapshot.exists() ? snapshot.val() : true; // تمكين الحماية بشكل افتراضي
-  } catch (error) {
-    console.error('Error checking password protection:', error);
-    return true; // إعادة القيمة الافتراضية في حالة الخطأ
-  }
-};
-
-/**
- * التحقق من صحة كلمة مرور الموقع
+ * التحقق من كلمة مرور حماية الموقع
+ * @param password كلمة المرور المقدمة
+ * @returns صحيح إذا كانت كلمة المرور صحيحة
  */
 export const validateSitePassword = async (password: string): Promise<boolean> => {
   try {
-    const snapshot = await get(ref(database, 'settings/passwordProtection/password'));
-    const correctPassword = snapshot.exists() ? snapshot.val() : 'password123'; // كلمة المرور الافتراضية
+    // الحصول على كلمة المرور الصحيحة من Firebase
+    const passwordRef = ref(database, 'siteSettings/passwordProtection/password');
+    const snapshot = await get(passwordRef);
     
-    // تسجيل محاولة التحقق من كلمة المرور
-    const ip = await getClientIP();
-    const userAgent = navigator.userAgent;
-    await logPasswordAttempt(ip, userAgent, password === correctPassword);
+    if (!snapshot.exists()) {
+      console.error('Site password not found in database');
+      return false;
+    }
     
-    return password === correctPassword;
+    const correctPassword = snapshot.val();
+    
+    // تسجيل محاولة المصادقة
+    const ip = await getCurrentIP();
+    const success = password === correctPassword;
+    
+    // تسجيل المحاولة
+    await logPasswordAttempt(ip, success);
+    
+    return success;
   } catch (error) {
     console.error('Error validating site password:', error);
     return false;
@@ -110,58 +142,128 @@ export const validateSitePassword = async (password: string): Promise<boolean> =
 };
 
 /**
- * تحديث كلمة مرور الموقع (للمشرف فقط)
+ * التحقق مما إذا كانت حماية كلمة المرور ممكّنة
+ * @returns صحيح إذا كانت الحماية ممكّنة
  */
-export const updateSitePassword = async (newPassword: string): Promise<boolean> => {
+export const checkPasswordProtectionEnabled = async (): Promise<boolean> => {
   try {
-    await set(ref(database, 'settings/passwordProtection/password'), newPassword);
-    return true;
+    const enabledRef = ref(database, 'siteSettings/passwordProtection/enabled');
+    const snapshot = await get(enabledRef);
+    
+    return snapshot.exists() ? snapshot.val() : false;
   } catch (error) {
-    console.error('Error updating site password:', error);
+    console.error('Error checking password protection status:', error);
     return false;
   }
 };
 
 /**
- * تفعيل أو تعطيل حماية كلمة المرور (للمشرف فقط)
+ * تمكين أو تعطيل حماية كلمة المرور
+ * @param enabled الحالة الجديدة
  */
-export const togglePasswordProtection = async (enabled: boolean): Promise<boolean> => {
+export const setPasswordProtection = async (enabled: boolean): Promise<void> => {
   try {
-    await set(ref(database, 'settings/passwordProtection/enabled'), enabled);
-    return true;
+    const enabledRef = ref(database, 'siteSettings/passwordProtection/enabled');
+    await set(enabledRef, enabled);
   } catch (error) {
-    console.error('Error toggling password protection:', error);
-    return false;
+    console.error('Error setting password protection:', error);
+    throw error;
   }
 };
 
-// --------- وظائف تسجيل الأمان ---------
+/**
+ * تغيير كلمة مرور الموقع
+ * @param newPassword كلمة المرور الجديدة
+ */
+export const setSitePassword = async (newPassword: string): Promise<void> => {
+  try {
+    const passwordRef = ref(database, 'siteSettings/passwordProtection/password');
+    await set(passwordRef, newPassword);
+  } catch (error) {
+    console.error('Error setting site password:', error);
+    throw error;
+  }
+};
+
+/**
+ * الحصول على عنوان IP الحالي
+ * @returns وعد بعنوان IP
+ */
+export const getCurrentIP = async (): Promise<string> => {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    return data.ip;
+  } catch (error) {
+    console.error('Error getting IP address:', error);
+    return 'unknown';
+  }
+};
 
 /**
  * تسجيل محاولة تسجيل الدخول
+ * @param email البريد الإلكتروني المستخدم
+ * @param ip عنوان IP
+ * @param success نجاح المحاولة
  */
-export const logLoginAttempt = async (email: string, success: boolean): Promise<void> => {
+export const logLoginAttempt = async (
+  email: string,
+  ip: string,
+  success: boolean
+): Promise<void> => {
   try {
-    const ip = await getClientIP();
-    const timestamp = Date.now();
-    const userAgent = navigator.userAgent;
+    const sanitizedIP = sanitizeIP(ip);
+    const loginAttemptsRef = ref(database, 'security/loginAttempts');
     
-    // تحليل معلومات المتصفح والجهاز بشكل بسيط
-    const deviceInfo = parseUserAgent(userAgent);
-    
-    // حفظ معلومات محاولة تسجيل الدخول
-    const logRef = ref(database, `security/loginAttempts/${sanitizeIP(ip)}/${timestamp}`);
-    await set(logRef, {
+    // تسجيل المحاولة
+    await push(loginAttemptsRef, {
       email,
-      timestamp,
-      userAgent,
-      deviceInfo,
-      success
+      ip: sanitizedIP,
+      success,
+      timestamp: serverTimestamp(),
+      userAgent: navigator.userAgent
     });
     
-    // إذا فشلت المحاولة، تحديث عداد المحاولات الفاشلة
+    // إذا فشلت المحاولة، قم بتحديث عدد المحاولات الفاشلة لهذا العنوان IP
     if (!success) {
-      await updateFailedAttempts(ip);
+      // الحصول على حالة IP الحالية
+      const ipStatusRef = ref(database, `security/ipStatus/${sanitizedIP}`);
+      const ipStatusSnapshot = await get(ipStatusRef);
+      
+      let failedAttempts = 1;
+      
+      if (ipStatusSnapshot.exists()) {
+        failedAttempts = (ipStatusSnapshot.val().failedAttempts || 0) + 1;
+      }
+      
+      // تحديث حالة IP
+      await update(ipStatusRef, {
+        failedAttempts,
+        lastAttempt: serverTimestamp()
+      });
+      
+      // إذا تجاوز عدد المحاولات الفاشلة الحد المسموح به، قم بوضع تأخير مؤقت أو حظر
+      if (failedAttempts >= 10) {
+        // حظر دائم بعد 10 محاولات فاشلة
+        await update(ipStatusRef, {
+          banned: true,
+          bannedTimestamp: serverTimestamp()
+        });
+      } else if (failedAttempts >= 5) {
+        // تأخير مؤقت بعد 5 محاولات فاشلة
+        const cooldownTime = Date.now() + (30 * 1000); // 30 ثانية من الآن
+        await update(ipStatusRef, {
+          cooldown: cooldownTime
+        });
+      }
+    } else {
+      // إذا نجحت المحاولة، قم بإعادة تعيين عدد المحاولات الفاشلة
+      const ipStatusRef = ref(database, `security/ipStatus/${sanitizedIP}`);
+      await update(ipStatusRef, {
+        failedAttempts: 0,
+        cooldown: null,
+        lastSuccessfulLogin: serverTimestamp()
+      });
     }
   } catch (error) {
     console.error('Error logging login attempt:', error);
@@ -169,203 +271,110 @@ export const logLoginAttempt = async (email: string, success: boolean): Promise<
 };
 
 /**
- * تسجيل محاولة التحقق من كلمة المرور
+ * تسجيل محاولة إدخال كلمة مرور الموقع
+ * @param ip عنوان IP
+ * @param success نجاح المحاولة
  */
-export const logPasswordAttempt = async (ip: string, userAgent: string, success: boolean): Promise<void> => {
+export const logPasswordAttempt = async (
+  ip: string,
+  success: boolean
+): Promise<void> => {
   try {
-    const timestamp = Date.now();
+    const sanitizedIP = sanitizeIP(ip);
+    const passwordAttemptsRef = ref(database, 'security/passwordAttempts');
     
-    // حفظ معلومات محاولة كلمة المرور
-    const logRef = ref(database, `security/passwordAttempts/${sanitizeIP(ip)}/${timestamp}`);
-    await set(logRef, {
-      timestamp,
-      userAgent,
-      success
+    // تسجيل المحاولة
+    await push(passwordAttemptsRef, {
+      ip: sanitizedIP,
+      success,
+      timestamp: serverTimestamp(),
+      userAgent: navigator.userAgent
     });
     
-    // إذا فشلت المحاولة، تحديث عداد المحاولات الفاشلة
+    // إذا فشلت المحاولة، قم بتحديث عدد المحاولات الفاشلة لهذا العنوان IP
     if (!success) {
-      await updateFailedAttempts(ip);
+      // الحصول على حالة IP الحالية
+      const ipStatusRef = ref(database, `security/ipStatus/${sanitizedIP}`);
+      const ipStatusSnapshot = await get(ipStatusRef);
+      
+      let failedAttempts = 1;
+      
+      if (ipStatusSnapshot.exists()) {
+        failedAttempts = (ipStatusSnapshot.val().failedPasswordAttempts || 0) + 1;
+      }
+      
+      // تحديث حالة IP
+      await update(ipStatusRef, {
+        failedPasswordAttempts: failedAttempts,
+        lastPasswordAttempt: serverTimestamp()
+      });
+      
+      // إذا تجاوز عدد المحاولات الفاشلة الحد المسموح به، قم بوضع تأخير مؤقت أو حظر
+      if (failedAttempts >= 10) {
+        // حظر دائم بعد 10 محاولات فاشلة
+        await update(ipStatusRef, {
+          banned: true,
+          bannedTimestamp: serverTimestamp()
+        });
+      } else if (failedAttempts >= 5) {
+        // تأخير مؤقت بعد 5 محاولات فاشلة
+        const cooldownTime = Date.now() + (30 * 1000); // 30 ثانية من الآن
+        await update(ipStatusRef, {
+          cooldown: cooldownTime
+        });
+      }
+    } else {
+      // إذا نجحت المحاولة، قم بإعادة تعيين عدد المحاولات الفاشلة
+      const ipStatusRef = ref(database, `security/ipStatus/${sanitizedIP}`);
+      await update(ipStatusRef, {
+        failedPasswordAttempts: 0,
+        cooldown: null,
+        lastSuccessfulPasswordAttempt: serverTimestamp()
+      });
     }
   } catch (error) {
     console.error('Error logging password attempt:', error);
   }
 };
 
-// --------- وظائف مساعدة ---------
-
 /**
- * الحصول على عنوان IP الخاص بالعميل
+ * فحص حالة عنوان IP
+ * @param ip عنوان IP للفحص
+ * @returns معلومات حول حالة عنوان IP
  */
-export const getClientIP = async (): Promise<string> => {
+export const checkIPStatus = async (ip: string): Promise<{
+  banned: boolean;
+  cooldown: number | null;
+}> => {
   try {
-    // استخدام خدمة خارجية للحصول على عنوان IP
-    const response = await fetch('https://api.ipify.org?format=json');
-    const data = await response.json();
-    return data.ip;
-  } catch (error) {
-    console.error('Error fetching client IP:', error);
-    return 'unknown';
-  }
-};
-
-/**
- * معالجة عنوان IP ليكون آمنًا للاستخدام في مسارات Firebase
- */
-export const sanitizeIP = (ip: string): string => {
-  if (!ip) return 'unknown';
-  return ip.replace(/\./g, '_');
-};
-
-/**
- * تحليل معلومات المتصفح والجهاز من User-Agent
- */
-export const parseUserAgent = (userAgent: string): { browser: string; os: string; device: string } => {
-  // تنفيذ بسيط لتحليل User-Agent
-  let browser = 'Unknown';
-  let os = 'Unknown';
-  let device = 'Unknown';
-  
-  // تحديد المتصفح
-  if (userAgent.includes('Chrome')) {
-    browser = 'Chrome';
-  } else if (userAgent.includes('Firefox')) {
-    browser = 'Firefox';
-  } else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
-    browser = 'Safari';
-  } else if (userAgent.includes('MSIE') || userAgent.includes('Trident/')) {
-    browser = 'Internet Explorer';
-  } else if (userAgent.includes('Edge')) {
-    browser = 'Edge';
-  }
-  
-  // تحديد نظام التشغيل
-  if (userAgent.includes('Windows')) {
-    os = 'Windows';
-  } else if (userAgent.includes('Mac OS')) {
-    os = 'macOS';
-  } else if (userAgent.includes('Android')) {
-    os = 'Android';
-  } else if (userAgent.includes('iOS') || userAgent.includes('iPhone') || userAgent.includes('iPad')) {
-    os = 'iOS';
-  } else if (userAgent.includes('Linux')) {
-    os = 'Linux';
-  }
-  
-  // تحديد نوع الجهاز
-  if (userAgent.includes('Mobile')) {
-    device = 'Mobile';
-  } else if (userAgent.includes('Tablet') || userAgent.includes('iPad')) {
-    device = 'Tablet';
-  } else {
-    device = 'Desktop';
-  }
-  
-  return { browser, os, device };
-};
-
-/**
- * تحديث عداد المحاولات الفاشلة لعنوان IP
- */
-export const updateFailedAttempts = async (ip: string): Promise<void> => {
-  try {
-    const safeIP = sanitizeIP(ip);
-    const statsRef = ref(database, `security/ipStats/${safeIP}`);
-    
-    // قراءة البيانات الحالية
-    const snapshot = await get(statsRef);
-    const stats = snapshot.exists() ? snapshot.val() : { failedAttempts: 0 };
-    
-    // زيادة عدد المحاولات الفاشلة
-    stats.failedAttempts = (stats.failedAttempts || 0) + 1;
-    stats.lastFailedAttempt = Date.now();
-    
-    // تحديث البيانات
-    await set(statsRef, stats);
-    
-    // التحقق من الحاجة إلى منع الوصول
-    if (stats.failedAttempts >= 10) {
-      await banIP(ip);
-    } else if (stats.failedAttempts >= 5) {
-      await cooldownIP(ip);
-    }
-  } catch (error) {
-    console.error('Error updating failed attempts:', error);
-  }
-};
-
-/**
- * منع وصول عنوان IP
- */
-export const banIP = async (ip: string): Promise<void> => {
-  try {
-    const safeIP = sanitizeIP(ip);
-    await set(ref(database, `security/ipStatus/${safeIP}`), {
-      banned: true,
-      bannedAt: Date.now(),
-      reason: 'Too many failed attempts',
-      lastUpdated: Date.now()
-    });
-  } catch (error) {
-    console.error('Error banning IP:', error);
-  }
-};
-
-/**
- * فرض تأخير على عنوان IP
- */
-export const cooldownIP = async (ip: string): Promise<void> => {
-  try {
-    const safeIP = sanitizeIP(ip);
-    const cooldownTime = Date.now() + 30 * 60 * 1000; // 30 دقيقة
-    
-    await set(ref(database, `security/ipStatus/${safeIP}`), {
-      banned: false,
-      cooldownUntil: cooldownTime,
-      lastUpdated: Date.now()
-    });
-  } catch (error) {
-    console.error('Error setting cooldown for IP:', error);
-  }
-};
-
-/**
- * التحقق من حالة عنوان IP
- */
-export const checkIPStatus = async (ip?: string): Promise<{ banned: boolean; cooldown: number | null }> => {
-  try {
-    // إذا لم يتم تمرير عنوان IP، استخدام عنوان IP الحالي
-    const clientIP = ip || await getClientIP();
-    const safeIP = sanitizeIP(clientIP);
-    
-    const snapshot = await get(ref(database, `security/ipStatus/${safeIP}`));
+    const sanitizedIP = sanitizeIP(ip);
+    const ipStatusRef = ref(database, `security/ipStatus/${sanitizedIP}`);
+    const snapshot = await get(ipStatusRef);
     
     if (!snapshot.exists()) {
       return { banned: false, cooldown: null };
     }
     
     const status = snapshot.val();
-    const now = Date.now();
     
-    return {
-      banned: status.banned === true,
-      cooldown: status.cooldownUntil && status.cooldownUntil > now ? status.cooldownUntil : null
-    };
+    // التحقق من الحظر
+    if (status.banned) {
+      return { banned: true, cooldown: null };
+    }
+    
+    // التحقق من التأخير المؤقت
+    if (status.cooldown && status.cooldown > Date.now()) {
+      return { banned: false, cooldown: status.cooldown };
+    }
+    
+    // إذا انتهى التأخير المؤقت، قم بإزالته
+    if (status.cooldown && status.cooldown <= Date.now()) {
+      await update(ipStatusRef, { cooldown: null });
+    }
+    
+    return { banned: false, cooldown: null };
   } catch (error) {
     console.error('Error checking IP status:', error);
-    // في حالة الخطأ، السماح بالوصول
     return { banned: false, cooldown: null };
   }
-};
-
-export default {
-  auth,
-  loginAdmin,
-  logoutAdmin,
-  getCurrentUser,
-  isPasswordProtectionEnabled,
-  validateSitePassword,
-  updateSitePassword,
-  togglePasswordProtection,
-  checkIPStatus
 };
