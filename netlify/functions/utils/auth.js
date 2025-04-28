@@ -1,0 +1,137 @@
+// ملف مساعد للتحقق من المصادقة في وظائف Netlify Functions
+const jwt = require('jsonwebtoken');
+const { getFirebaseAdminAuth } = require('../firebase-admin');
+const { createErrorResponse } = require('./util');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-do-not-use-in-production';
+const JWT_EXPIRY = '24h'; // مدة صلاحية الرمز
+
+/**
+ * إنشاء رمز JWT للمستخدم المصادق عليه
+ * @param {string} uid معرف المستخدم
+ * @param {object} additionalClaims معلومات إضافية لتضمينها في الرمز
+ * @returns {string} رمز JWT
+ */
+const generateToken = (uid, additionalClaims = {}) => {
+  return jwt.sign(
+    { 
+      uid,
+      ...additionalClaims
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRY }
+  );
+};
+
+/**
+ * التحقق من صحة رمز JWT
+ * @param {string} token رمز JWT للتحقق منه
+ * @returns {object|null} معلومات المستخدم إذا كان الرمز صالحًا، وإلا فارغ
+ */
+const verifyToken = (token) => {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    console.error('Error verifying JWT token:', error.message);
+    return null;
+  }
+};
+
+/**
+ * استخراج رمز المصادقة من رؤوس الطلب
+ * @param {object} event كائن الحدث من Netlify Function
+ * @returns {string|null} رمز المصادقة أو فارغ إذا لم يتم العثور عليه
+ */
+const extractAuthToken = (event) => {
+  const authHeader = event.headers.authorization || event.headers.Authorization;
+  
+  if (!authHeader) {
+    return null;
+  }
+  
+  // التحقق من نمط رمز المصادقة
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return null;
+  }
+  
+  return parts[1];
+};
+
+/**
+ * التحقق من المصادقة للوظائف التي تتطلب مستخدمًا مصادقًا عليه
+ * @param {object} event كائن الحدث من Netlify Function
+ * @returns {Promise<object>} معلومات المستخدم أو استجابة خطأ
+ */
+const requireAuth = async (event) => {
+  const token = extractAuthToken(event);
+  
+  if (!token) {
+    return { 
+      isAuthorized: false,
+      error: createErrorResponse(401, 'Authorization token is missing')
+    };
+  }
+  
+  const decoded = verifyToken(token);
+  
+  if (!decoded) {
+    return { 
+      isAuthorized: false,
+      error: createErrorResponse(401, 'Invalid or expired token')
+    };
+  }
+  
+  try {
+    // التحقق من وجود المستخدم في Firebase إذا كان ذلك مطلوبًا
+    // في بعض الحالات قد لا تحتاج إلى هذه الخطوة إذا كنت تثق في الرمز نفسه
+    const auth = getFirebaseAdminAuth();
+    const userRecord = await auth.getUser(decoded.uid);
+    
+    return { 
+      isAuthorized: true,
+      user: {
+        uid: userRecord.uid,
+        email: userRecord.email,
+        isAdmin: decoded.isAdmin || false,
+        ...decoded
+      }
+    };
+  } catch (error) {
+    console.error('Error verifying user:', error);
+    return { 
+      isAuthorized: false,
+      error: createErrorResponse(401, 'Failed to verify user')
+    };
+  }
+};
+
+/**
+ * التحقق من صلاحيات المسؤول للوظائف التي تتطلب صلاحيات مسؤول
+ * @param {object} event كائن الحدث من Netlify Function
+ * @returns {Promise<object>} معلومات المستخدم أو استجابة خطأ
+ */
+const requireAdmin = async (event) => {
+  const authResult = await requireAuth(event);
+  
+  if (!authResult.isAuthorized) {
+    return authResult;
+  }
+  
+  if (!authResult.user.isAdmin) {
+    return { 
+      isAuthorized: false,
+      error: createErrorResponse(403, 'Insufficient permissions. Admin access required.')
+    };
+  }
+  
+  return authResult;
+};
+
+module.exports = {
+  generateToken,
+  verifyToken,
+  extractAuthToken,
+  requireAuth,
+  requireAdmin
+};

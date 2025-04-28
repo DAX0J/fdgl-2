@@ -2,7 +2,7 @@
 const { handleCors } = require('./utils/cors');
 const { logSecurityActivity } = require('./utils/securityLogs');
 const { requireAuth } = require('./utils/auth');
-const { createSuccessResponse, createErrorResponse, getClientInfo } = require('./util');
+const { createSuccessResponse, createErrorResponse, getClientInfo } = require('./utils/util');
 
 /**
  * تسجيل نشاط مستخدم

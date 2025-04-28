@@ -2,7 +2,7 @@
 const { handleCors } = require('./utils/cors');
 const { detectThreats } = require('./utils/securityLogs');
 const { requireAdmin } = require('./utils/auth');
-const { createSuccessResponse, createErrorResponse } = require('./util');
+const { createSuccessResponse, createErrorResponse } = require('./utils/util');
 
 /**
  * تحليل سجلات الوصول للكشف عن أنماط مشبوهة

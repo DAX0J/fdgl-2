@@ -1,5 +1,5 @@
 const admin = require("firebase-admin");
-const { getFirebaseConfig } = require("./util");
+const { getFirebaseConfig } = require("./utils/util");
 
 // تهيئة تطبيق Firebase Admin إذا لم يتم تهيئته بالفعل
 let firebaseApp;

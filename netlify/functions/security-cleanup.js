@@ -2,7 +2,7 @@
 const { handleCors } = require('./utils/cors');
 const { cleanupOldLogs } = require('./utils/securityLogs');
 const { requireAdmin } = require('./utils/auth');
-const { createSuccessResponse, createErrorResponse } = require('./util');
+const { createSuccessResponse, createErrorResponse } = require('./utils/util');
 
 /**
  * تنظيف سجلات الأمان القديمة
