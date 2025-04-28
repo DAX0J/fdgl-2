@@ -1,92 +1,95 @@
+// ملف مساعد للتعامل مع CORS في وظائف Netlify
+
 /**
- * وحدة مساعدة للتعامل مع CORS في وظائف Netlify Functions
+ * التحقق ما إذا كان المصدر مسموح به
+ * @param {string} origin المصدر الذي يجب التحقق منه
+ * @returns {boolean} ما إذا كان المصدر مسموح به
  */
-
-// الحصول على قائمة المجالات المسموح بها من متغيرات البيئة
-const getAllowedOrigins = () => {
-  // إذا كان متغير البيئة موجود، استخدمه
-  if (process.env.ALLOWED_ORIGINS) {
-    return process.env.ALLOWED_ORIGINS.split(',');
-  }
-  
-  // القائمة الافتراضية للمجالات المسموح بها في بيئة التطوير
-  return [
-    'http://localhost:3000',
-    'http://localhost:5000',
-    'https://e2-com-10-2024-to-11-2024.netlify.app' // استبدل هذا بمجال موقعك الرسمي
-  ];
-};
-
-// التحقق مما إذا كان المجال مسموح به
 const isOriginAllowed = (origin) => {
-  if (!origin) return false;
-  
-  const allowedOrigins = getAllowedOrigins();
-  return allowedOrigins.includes(origin) || allowedOrigins.includes('*');
-};
+  // قائمة المصادر المسموح بها
+  const allowedOrigins = [
+    'http://localhost:5000',
+    'https://e2-com-10-2024-to-11-2024.netlify.app'
+  ];
 
-// إعداد رؤوس CORS للاستجابة
-const setCorsHeaders = (response, origin) => {
-  // إذا كان المجال مسموح به، أرجع رؤوس CORS المناسبة
-  if (isOriginAllowed(origin)) {
-    response.headers = {
-      ...response.headers,
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Authorization',
-      'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Max-Age': '86400', // 24 ساعة
-    };
-  } else {
-    // إذا لم يكن المجال مسموح به، استخدم القيمة الافتراضية
-    // في بيئة الإنتاج، قد ترغب في رفض الطلب بدلاً من ذلك
-    response.headers = {
-      ...response.headers,
-      'Access-Control-Allow-Origin': 'http://localhost:5000'
-    };
+  // إذا كانت هناك قائمة مصادر محددة في متغيرات البيئة، استخدمها
+  if (process.env.ALLOWED_ORIGINS) {
+    const originsFromEnv = process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim());
+    allowedOrigins.push(...originsFromEnv);
   }
-  
-  return response;
+
+  // التحقق ما إذا كان المصدر المحدد مسموح به
+  return allowedOrigins.includes(origin);
 };
 
-// معالج الطلبات المسبقة (OPTIONS)
-const handlePreflight = (event) => {
+/**
+ * إضافة رؤوس CORS للاستجابة
+ * @param {Object} event كائن الحدث من Netlify Function
+ * @param {Object} response كائن الاستجابة الذي سيتم إضافة رؤوس CORS إليه
+ * @returns {Object} الاستجابة مع رؤوس CORS
+ */
+const addCorsHeaders = (event, response) => {
+  const origin = event.headers.origin || event.headers.Origin;
+  const headers = response.headers || {};
+
+  // إذا كان المصدر مسموح به، أضف رؤوس CORS
+  if (origin && isOriginAllowed(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+    headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept, Authorization';
+    headers['Access-Control-Allow-Credentials'] = 'true';
+    headers['Access-Control-Max-Age'] = '86400';
+  }
+
+  // إعادة الاستجابة مع رؤوس CORS
+  return { ...response, headers };
+};
+
+/**
+ * معالجة طلبات CORS للوظائف السحابية
+ * @param {Object} event كائن الحدث من Netlify Function
+ * @param {Object} handler دالة معالج الوظيفة السحابية
+ * @returns {Object|Function} استجابة لطلب CORS أو استدعاء المعالج
+ */
+const handleCors = (event, handler) => {
   const origin = event.headers.origin || event.headers.Origin;
   
+  // التعامل مع طلبات OPTIONS
   if (event.httpMethod === 'OPTIONS') {
-    const response = {
-      statusCode: 204,
-      headers: {},
-      body: ''
-    };
-    
-    return setCorsHeaders(response, origin);
-  }
-  
-  return null;
-};
-
-// ربط CORS مع معالج الوظيفة
-const applyCors = (handler) => {
-  return async (event, context) => {
-    // معالجة طلبات OPTIONS المسبقة
-    const preflightResponse = handlePreflight(event);
-    if (preflightResponse) {
-      return preflightResponse;
+    if (origin && isOriginAllowed(origin)) {
+      return {
+        statusCode: 204,
+        headers: {
+          'Access-Control-Allow-Origin': origin,
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Authorization',
+          'Access-Control-Allow-Credentials': 'true',
+          'Access-Control-Max-Age': '86400'
+        },
+        body: ''
+      };
+    } else {
+      return {
+        statusCode: 403,
+        body: JSON.stringify({ success: false, message: 'CORS not allowed' })
+      };
     }
-    
-    // استدعاء المعالج الأصلي
-    const response = await handler(event, context);
-    
-    // إضافة رؤوس CORS إلى الاستجابة
-    const origin = event.headers.origin || event.headers.Origin;
-    return setCorsHeaders(response, origin);
-  };
+  }
+
+  // التحقق من المصدر قبل معالجة الطلب
+  if (origin && !isOriginAllowed(origin)) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({ success: false, message: 'CORS not allowed' })
+    };
+  }
+
+  // استمر بمعالجة الطلب واستخدم المعالج الأساسي
+  return handler(event);
 };
 
 module.exports = {
-  applyCors,
   isOriginAllowed,
-  setCorsHeaders,
-  handlePreflight
+  addCorsHeaders,
+  handleCors
 };
