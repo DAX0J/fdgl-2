@@ -1,4 +1,32 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["express"]
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+  
+[dev]
+  command = "npm run dev"
+  port = 5000
+  targetPort = 5000
+  
+[headers]
+  for = "/*"
+    [headers.values]
+      X-Frame-Options = "DENY"
+      X-XSS-Protection = "1; mode=block"
+      X-Content-Type-Options = "nosniff"
+      Referrer-Policy = "strict-origin-when-cross-origin"
+      Content-Security-Policy = "default-src 'self'; connect-src 'self' https://*.firebase.io https://*.firebaseio.com https://*.firebaseapp.com; img-src 'self' data: https://*.unsplash.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
