@@ -83,8 +83,25 @@ const handleCors = (event, handler) => {
   return addCorsHeaders(event, result);
 };
 
+// وظيفة مرفقة للتوافق مع النسخ القديمة من الكود
+const applyCors = (handler) => {
+  return (event, context) => {
+    // التعامل مع طلبات OPTIONS بشكل خاص
+    if (event.httpMethod === 'OPTIONS') {
+      return handleCors(event, () => ({
+        statusCode: 204,
+        body: ''
+      }));
+    }
+    
+    // معالجة الطلب مع دعم CORS
+    return handleCors(event, () => handler(event, context));
+  };
+};
+
 module.exports = {
   isOriginAllowed,
   addCorsHeaders,
-  handleCors
+  handleCors,
+  applyCors
 };

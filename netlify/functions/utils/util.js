@@ -1,137 +1,100 @@
-// ملف وظائف مساعدة عامة لاستخدامها في وظائف Netlify Functions
+// ملف مساعد للوظائف المتنوعة
+const jwt = require('jsonwebtoken');
 
 /**
- * إنشاء استجابة نجاح موحدة
- * @param {object} data البيانات المراد إرجاعها في الاستجابة
- * @param {object} headers رؤوس HTTP الإضافية
- * @returns {object} كائن استجابة موحد
+ * معالجة عنوان IP ليكون آمنًا للاستخدام كمسار في Firebase
+ * Firebase لا يسمح بالنقاط في مسارات قاعدة البيانات، لذلك نستبدلها بـ _
+ * @param {string} ip عنوان IP
+ * @returns {string} عنوان IP آمن للاستخدام كمسار
  */
-function createSuccessResponse(data = {}, headers = {}) {
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers
-    },
-    body: JSON.stringify({
-      success: true,
-      data
-    })
-  };
-}
-
-/**
- * إنشاء استجابة خطأ موحدة
- * @param {number} statusCode رمز حالة HTTP
- * @param {string} message رسالة الخطأ
- * @param {object} details تفاصيل إضافية عن الخطأ
- * @param {object} headers رؤوس HTTP الإضافية
- * @returns {object} كائن استجابة موحد
- */
-function createErrorResponse(statusCode = 400, message = 'حدث خطأ', details = {}, headers = {}) {
-  return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers
-    },
-    body: JSON.stringify({
-      success: false,
-      error: {
-        message,
-        ...details
-      }
-    })
-  };
-}
-
-/**
- * معالجة خطأ بطريقة موحدة
- * @param {Error} error كائن الخطأ
- * @param {string} defaultMessage رسالة افتراضية
- * @returns {object} استجابة خطأ موحدة
- */
-function handleError(error, defaultMessage = 'حدث خطأ في الخادم') {
-  console.error('Error:', error);
-  
-  let statusCode = 500;
-  let message = defaultMessage;
-  
-  // محاولة استخراج معلومات أكثر تفصيلاً من الخطأ إذا كانت متاحة
-  if (error.statusCode) {
-    statusCode = error.statusCode;
-  }
-  
-  if (error.message) {
-    message = error.message;
-  }
-  
-  return createErrorResponse(statusCode, message, {
-    stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-  });
-}
-
-/**
- * تنظيف مسار عنوان IP لاستخدامه في Firebase
- * @param {string} ip عنوان IP الأصلي
- * @returns {string} عنوان IP المنظف للاستخدام كمفتاح في Firebase
- */
-function sanitizeIPForFirebase(ip) {
+const sanitizeIPForFirebase = (ip) => {
+  if (!ip) return 'unknown';
   return ip.replace(/\./g, '_');
-}
+};
 
 /**
- * استخراج عنوان IP من طلب Netlify Function
- * @param {object} event كائن حدث Netlify Function
+ * استخراج عنوان IP من كائن الحدث
+ * @param {object} event كائن الحدث من Netlify Function
  * @returns {string} عنوان IP
  */
-function getIPFromRequest(event) {
-  // أولًا، نحاول الحصول على IP من رؤوس Netlify
-  const netlifySources = [
-    event.headers['x-nf-client-connection-ip'],
-    event.headers['client-ip'],
-  ];
+const getIPFromRequest = (event) => {
+  let ip = event.headers['client-ip'] || 
+           event.headers['x-forwarded-for'] || 
+           event.requestContext?.identity?.sourceIp ||
+           event.ip ||
+           'unknown';
   
-  // ثم نحاول الحصول على IP من الرؤوس القياسية
-  const standardSources = [
-    event.headers['x-forwarded-for'],
-    event.headers['x-real-ip'],
-    event.headers['true-client-ip']
-  ];
-  
-  // البحث عن أول قيمة صالحة في مصادر Netlify
-  for (const source of netlifySources) {
-    if (source) {
-      // إذا كان هناك قائمة IPs، نأخذ الأول (الأصلي)
-      return source.split(',')[0].trim();
-    }
+  // في حالة وجود قائمة من عناوين IP، استخدام العنوان الأول
+  if (ip && ip.includes(',')) {
+    ip = ip.split(',')[0].trim();
   }
   
-  // البحث عن أول قيمة صالحة في المصادر القياسية
-  for (const source of standardSources) {
-    if (source) {
-      // إذا كان هناك قائمة IPs، نأخذ الأول (الأصلي)
-      return source.split(',')[0].trim();
-    }
-  }
-  
-  // اللجوء إلى القيمة الافتراضية إذا لم نجد أي شيء
-  return event.requestContext?.identity?.sourceIp || '0.0.0.0';
-}
+  return ip;
+};
 
 /**
- * إنشاء معرف فريد
- * @returns {string} معرف فريد
+ * الحصول على User-Agent من كائن الحدث
+ * @param {object} event كائن الحدث من Netlify Function
+ * @returns {string} User-Agent
  */
-function generateUniqueId() {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2);
-}
+const getUserAgentFromRequest = (event) => {
+  return event.headers['user-agent'] || event.headers['User-Agent'] || 'unknown';
+};
+
+/**
+ * الحصول على معلومات العميل من كائن الحدث
+ * @param {object} event كائن الحدث من Netlify Function
+ * @returns {{ip: string, userAgent: string}} معلومات العميل
+ */
+const getClientInfo = (event) => {
+  return {
+    ip: getIPFromRequest(event),
+    userAgent: getUserAgentFromRequest(event)
+  };
+};
+
+/**
+ * إنشاء استجابة نجاح
+ * @param {object} data بيانات الاستجابة
+ * @param {number} statusCode رمز الحالة (اختياري، الافتراضي: 200)
+ * @returns {object} استجابة نجاح
+ */
+const createSuccessResponse = (data, statusCode = 200) => {
+  return {
+    statusCode,
+    body: JSON.stringify(data),
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  };
+};
+
+/**
+ * إنشاء استجابة خطأ
+ * @param {number} statusCode رمز الحالة
+ * @param {string} message رسالة الخطأ
+ * @param {object} additionalData بيانات إضافية (اختياري)
+ * @returns {object} استجابة خطأ
+ */
+const createErrorResponse = (statusCode, message, additionalData = {}) => {
+  return {
+    statusCode,
+    body: JSON.stringify({
+      success: false,
+      message,
+      ...additionalData
+    }),
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  };
+};
 
 module.exports = {
-  createSuccessResponse,
-  createErrorResponse,
-  handleError,
   sanitizeIPForFirebase,
   getIPFromRequest,
-  generateUniqueId
+  getUserAgentFromRequest,
+  getClientInfo,
+  createSuccessResponse,
+  createErrorResponse
 };

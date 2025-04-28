@@ -1,109 +1,139 @@
-// ملف للتعامل مع سجلات الأمان وتتبع محاولات المصادقة
+// ملف مساعد للتعامل مع سجلات الأمان
 const { getFirebaseAdminDatabase } = require('../firebase-admin');
+const { sanitizeIPForFirebase } = require('./util');
 
 /**
- * تنظيف مسار عنوان IP لاستخدامه في Firebase
- * يستبدل كل النقاط بالشرطات السفلية لتلبية متطلبات مسارات Firebase
- * @param {string} ip عنوان IP الأصلي
- * @returns {string} عنوان IP المُنظّف للاستخدام كمفتاح في Firebase
+ * تسجيل محاولة تسجيل دخول
+ * @param {string} email البريد الإلكتروني المستخدم في المحاولة
+ * @param {string} ip عنوان IP
+ * @param {string} userAgent متصفح المستخدم
+ * @param {boolean} success هل نجحت المحاولة
+ * @returns {Promise<void>}
  */
-function sanitizeIPForFirebase(ip) {
-  return ip.replace(/\./g, '_');
+async function trackLoginAttempt(email, ip, userAgent, success) {
+  try {
+    const db = getFirebaseAdminDatabase();
+    const safeIP = sanitizeIPForFirebase(ip);
+    const now = Date.now();
+    
+    // تخزين محاولة تسجيل الدخول في سجل المحاولات
+    const loginRef = db.ref(`security/loginAttempts/${safeIP}`).push();
+    
+    await loginRef.set({
+      email: email || 'unknown',
+      timestamp: now,
+      userAgent: userAgent || 'unknown',
+      success: success || false
+    });
+    
+    // إذا فشلت المحاولة، قم بتحديث عداد المحاولات الفاشلة
+    if (!success) {
+      const ipStatsRef = db.ref(`security/ipStats/${safeIP}`);
+      const snapshot = await ipStatsRef.once('value');
+      const stats = snapshot.val() || { failedAttempts: 0, lastFailedAttempt: 0 };
+      
+      // زيادة عدد المحاولات الفاشلة
+      stats.failedAttempts = (stats.failedAttempts || 0) + 1;
+      stats.lastFailedAttempt = now;
+      
+      // تحديث الإحصائيات
+      await ipStatsRef.set(stats);
+      
+      // إذا وصلت المحاولات الفاشلة إلى حد معين، فرض تأخير أو حظر
+      if (stats.failedAttempts >= 10) {
+        await updateIPStatus(safeIP, { banned: true, reason: 'Too many failed login attempts', bannedAt: now });
+      } else if (stats.failedAttempts >= 5) {
+        const cooldownUntil = now + (30 * 60 * 1000); // 30 دقيقة
+        await updateIPStatus(safeIP, { cooldownUntil });
+      }
+    } else {
+      // في حالة النجاح، إعادة تعيين عداد المحاولات الفاشلة
+      const ipStatsRef = db.ref(`security/ipStats/${safeIP}`);
+      await ipStatsRef.update({
+        failedAttempts: 0,
+        lastSuccessfulLogin: now
+      });
+      
+      // إزالة أي حظر أو تأخير
+      await updateIPStatus(safeIP, { banned: false, cooldownUntil: null });
+    }
+  } catch (error) {
+    console.error('Error tracking login attempt:', error);
+  }
 }
 
 /**
- * تسجيل محاولة تسجيل الدخول
- * @param {string} email البريد الإلكتروني المستخدم في محاولة تسجيل الدخول
- * @param {string} ip عنوان IP الخاص بالمستخدم
- * @param {string} userAgent معلومات متصفح المستخدم
- * @param {boolean} success ما إذا كانت محاولة تسجيل الدخول ناجحة
- * @param {object} deviceInfo معلومات جهاز المستخدم
- * @returns {Promise<boolean>} نجاح أو فشل تسجيل المحاولة
+ * تسجيل نشاط أمني
+ * @param {string} userId معرف المستخدم (إذا كان متاحًا)
+ * @param {string} actionType نوع النشاط
+ * @param {string} ip عنوان IP
+ * @param {string} userAgent متصفح المستخدم
+ * @param {object} additionalInfo معلومات إضافية
+ * @returns {Promise<void>}
  */
-async function trackLoginAttempt(email, ip, userAgent, success, deviceInfo = {}) {
+async function logSecurityActivity(userId, actionType, ip, userAgent, additionalInfo = {}) {
   try {
     const db = getFirebaseAdminDatabase();
-    const loginAttemptsRef = db.ref('security/loginAttempts');
+    const safeIP = sanitizeIPForFirebase(ip);
+    const now = Date.now();
     
-    // إنشاء معرف فريد للسجل
-    const timestamp = Date.now();
-    const id = `${timestamp}_${sanitizeIPForFirebase(ip)}_${success ? 'success' : 'fail'}`;
+    // إنشاء سجل النشاط
+    const activityLog = {
+      userId: userId || 'anonymous',
+      actionType,
+      ip: safeIP,
+      userAgent: userAgent || 'unknown',
+      timestamp: now,
+      details: additionalInfo
+    };
     
-    // تسجيل محاولة تسجيل الدخول
-    await loginAttemptsRef.child(id).set({
-      id,
-      email,
-      ip,
-      timestamp,
-      userAgent,
-      success,
-      deviceInfo: deviceInfo || {
-        browser: 'Unknown',
-        os: 'Unknown',
-        device: 'Unknown'
-      }
-    });
-    
-    // إذا فشلت محاولة تسجيل الدخول، قم بتحديث حالة IP
-    if (!success) {
-      await updateIPStatus(ip);
-    }
+    // تخزين السجل في قاعدة البيانات
+    const activityRef = db.ref(`security/activityLogs`).push();
+    await activityRef.set(activityLog);
     
     return true;
   } catch (error) {
-    console.error('Error logging login attempt:', error);
+    console.error('Error logging security activity:', error);
     return false;
   }
 }
 
 /**
- * تحديث حالة IP بعد محاولة فاشلة
- * @param {string} ip عنوان IP للتحديث
- * @returns {Promise<object|null>} حالة IP المحدثة أو فارغ في حالة الخطأ
+ * تحديث حالة عنوان IP
+ * @param {string} ip عنوان IP (يجب أن يكون قد مر بمعالجة sanitizeIPForFirebase)
+ * @param {object} status حالة IP الجديدة 
+ * @returns {Promise<void>}
  */
-async function updateIPStatus(ip) {
+async function updateIPStatus(ip, status) {
   try {
     const db = getFirebaseAdminDatabase();
-    const safeIP = sanitizeIPForFirebase(ip);
-    const ipStatusRef = db.ref(`security/ipStatus/${safeIP}`);
+    const ipStatusRef = db.ref(`security/ipStatus/${ip}`);
     
-    // الحصول على حالة IP الحالية
+    // التحقق من الحالة الحالية
     const snapshot = await ipStatusRef.once('value');
-    const currentStatus = snapshot.val() || { failedAttempts: 0, lastAttemptTime: 0 };
+    const currentStatus = snapshot.val() || {};
     
-    const now = Date.now();
-    const cooldownTime = 15 * 60 * 1000; // 15 دقيقة
-    const banThreshold = 5; // عدد المحاولات الفاشلة قبل الحظر
-    
-    // إعادة تعيين العداد إذا كان آخر محاولة منذ أكثر من ساعة
-    if (now - currentStatus.lastAttemptTime > 60 * 60 * 1000) {
-      currentStatus.failedAttempts = 1;
-    } else {
-      currentStatus.failedAttempts += 1;
-    }
-    
-    // تحديث حالة IP
-    const updatedStatus = {
-      ip,
-      failedAttempts: currentStatus.failedAttempts,
-      lastAttemptTime: now,
-      cooldownUntil: currentStatus.failedAttempts >= 3 ? now + cooldownTime : null,
-      banned: currentStatus.failedAttempts >= banThreshold
+    // دمج الحالة الحالية مع الحالة الجديدة
+    const newStatus = {
+      ...currentStatus,
+      ...status,
+      lastUpdated: Date.now()
     };
     
-    await ipStatusRef.set(updatedStatus);
+    // تحديث الحالة
+    await ipStatusRef.set(newStatus);
     
-    return updatedStatus;
+    return true;
   } catch (error) {
     console.error('Error updating IP status:', error);
-    return null;
+    return false;
   }
 }
 
 /**
- * التحقق من حالة IP
- * @param {string} ip عنوان IP للتحقق منه
- * @returns {Promise<object>} حالة IP
+ * التحقق من حالة عنوان IP
+ * @param {string} ip عنوان IP
+ * @returns {Promise<{banned: boolean, cooldown: number|null}>} حالة الحظر والتأخير
  */
 async function checkIPStatus(ip) {
   try {
@@ -131,106 +161,106 @@ async function checkIPStatus(ip) {
 }
 
 /**
- * تسجيل نشاط أمني
- * @param {string} userId معرف المستخدم (إذا كان متاحًا)
- * @param {string} actionType نوع النشاط
- * @param {string} description وصف النشاط
- * @param {object} additionalInfo معلومات إضافية
- * @returns {Promise<boolean>} نجاح أو فشل تسجيل النشاط
+ * تنظيف سجلات الأمان القديمة
+ * @returns {Promise<{loginAttempts: number, activityLogs: number, ipBans: number}>} عدد السجلات التي تم حذفها
  */
-async function logSecurityActivity(userId, actionType, description, additionalInfo = {}) {
+async function cleanupOldLogs() {
   try {
     const db = getFirebaseAdminDatabase();
-    const securityLogsRef = db.ref('security/activityLogs');
-    
-    const timestamp = Date.now();
-    const id = `${timestamp}_${userId || 'anonymous'}_${actionType}`;
-    
-    await securityLogsRef.child(id).set({
-      id,
-      userId: userId || 'anonymous',
-      actionType,
-      description,
-      timestamp,
-      additionalInfo
-    });
-    
-    return true;
-  } catch (error) {
-    console.error('Error logging security activity:', error);
-    return false;
-  }
-}
-
-/**
- * تنظيف سجلات قديمة
- * @param {number} olderThan عمر السجلات بالمللي ثانية
- * @returns {Promise<boolean>} نجاح أو فشل عملية التنظيف
- */
-async function cleanOldLogs(olderThan = 30 * 24 * 60 * 60 * 1000) { // 30 يوم افتراضيًا
-  try {
-    const db = getFirebaseAdminDatabase();
-    const loginAttemptsRef = db.ref('security/loginAttempts');
-    const activityLogsRef = db.ref('security/activityLogs');
-    
     const now = Date.now();
-    const cutoffTime = now - olderThan;
+    const oneMonthAgo = now - (30 * 24 * 60 * 60 * 1000); // شهر واحد
+    const oneWeekAgo = now - (7 * 24 * 60 * 60 * 1000); // أسبوع واحد
     
     // تنظيف سجلات تسجيل الدخول القديمة
-    const loginAttempts = await loginAttemptsRef.orderByChild('timestamp').endAt(cutoffTime).once('value');
-    const loginPromises = [];
+    const loginAttemptsRef = db.ref('security/loginAttempts');
+    const loginAttemptSnapshot = await loginAttemptsRef.once('value');
+    let loginAttemptsDeleted = 0;
     
-    loginAttempts.forEach((child) => {
-      loginPromises.push(loginAttemptsRef.child(child.key).remove());
+    // حذف محاولات تسجيل الدخول القديمة
+    const loginPromises = [];
+    loginAttemptSnapshot.forEach(ipSnapshot => {
+      const ipRef = loginAttemptsRef.child(ipSnapshot.key);
+      
+      ipSnapshot.forEach(attemptSnapshot => {
+        const attempt = attemptSnapshot.val();
+        
+        if (attempt && attempt.timestamp && attempt.timestamp < oneMonthAgo) {
+          loginPromises.push(
+            ipRef.child(attemptSnapshot.key).remove()
+            .then(() => { loginAttemptsDeleted++; })
+          );
+        }
+      });
     });
     
     // تنظيف سجلات النشاط القديمة
-    const activityLogs = await activityLogsRef.orderByChild('timestamp').endAt(cutoffTime).once('value');
+    const activityLogsRef = db.ref('security/activityLogs');
+    const activitySnapshot = await activityLogsRef.once('value');
+    let activityLogsDeleted = 0;
+    
+    // حذف سجلات النشاط القديمة
     const activityPromises = [];
-    
-    activityLogs.forEach((child) => {
-      activityPromises.push(activityLogsRef.child(child.key).remove());
-    });
-    
-    // تنفيذ جميع عمليات الحذف
-    await Promise.all([...loginPromises, ...activityPromises]);
-    
-    // إلغاء حظر عناوين IP التي لم تحاول تسجيل الدخول لمدة أسبوع
-    const ipStatusRef = db.ref('security/ipStatus');
-    const oldIPs = await ipStatusRef
-      .orderByChild('lastAttemptTime')
-      .endAt(now - (7 * 24 * 60 * 60 * 1000)) // أسبوع
-      .once('value');
-    
-    const ipPromises = [];
-    
-    oldIPs.forEach((child) => {
-      const status = child.val();
-      if (status.banned) {
-        ipPromises.push(
-          ipStatusRef.child(child.key).update({
-            banned: false,
-            cooldownUntil: null,
-            failedAttempts: 0
-          })
+    activitySnapshot.forEach(logSnapshot => {
+      const log = logSnapshot.val();
+      
+      if (log && log.timestamp && log.timestamp < oneMonthAgo) {
+        activityPromises.push(
+          activityLogsRef.child(logSnapshot.key).remove()
+          .then(() => { activityLogsDeleted++; })
         );
       }
     });
     
-    await Promise.all(ipPromises);
+    // إلغاء حظر عناوين IP التي لم تحاول تسجيل دخول لمدة أسبوع
+    const ipStatusRef = db.ref('security/ipStatus');
+    const ipStatusSnapshot = await ipStatusRef.once('value');
+    let ipBansRemoved = 0;
     
-    return true;
+    // حذف الحظر عن عناوين IP
+    const ipPromises = [];
+    ipStatusSnapshot.forEach(ipSnapshot => {
+      const ipStatus = ipSnapshot.val();
+      const ipStatsRef = db.ref(`security/ipStats/${ipSnapshot.key}`);
+      
+      // التحقق من آخر محاولة فاشلة
+      ipStatsRef.once('value').then(statsSnapshot => {
+        const stats = statsSnapshot.val();
+        
+        if (!stats || !stats.lastFailedAttempt || stats.lastFailedAttempt < oneWeekAgo) {
+          // إذا لم تكن هناك محاولات فاشلة حديثة، قم بإلغاء الحظر
+          if (ipStatus.banned) {
+            ipPromises.push(
+              ipStatusRef.child(ipSnapshot.key).update({ banned: false, cooldownUntil: null, unbannedAt: now })
+              .then(() => { ipBansRemoved++; })
+            );
+          }
+        }
+      });
+    });
+    
+    // انتظار انتهاء جميع العمليات
+    await Promise.all([...loginPromises, ...activityPromises, ...ipPromises]);
+    
+    return {
+      loginAttempts: loginAttemptsDeleted,
+      activityLogs: activityLogsDeleted,
+      ipBans: ipBansRemoved
+    };
   } catch (error) {
-    console.error('Error cleaning old logs:', error);
-    return false;
+    console.error('Error cleaning up old logs:', error);
+    return {
+      loginAttempts: 0,
+      activityLogs: 0,
+      ipBans: 0,
+      error: error.message
+    };
   }
 }
 
 module.exports = {
   trackLoginAttempt,
+  logSecurityActivity,
   updateIPStatus,
   checkIPStatus,
-  logSecurityActivity,
-  cleanOldLogs,
-  sanitizeIPForFirebase
+  cleanupOldLogs
 };

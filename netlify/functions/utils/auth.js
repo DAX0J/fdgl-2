@@ -143,11 +143,130 @@ const requireAdmin = async (event) => {
   return authResult;
 };
 
+// تخزين محلي لمحاولات تسجيل الدخول الفاشلة
+// يتم مسح هذا التخزين عند إعادة تشغيل الوظيفة
+const loginAttempts = {};
+
+/**
+ * التحقق من محاولات تسجيل الدخول لعنوان IP
+ * @param {string} ip عنوان IP
+ * @returns {{allowed: boolean, reason: string, delay: number}} حالة السماح وسبب المنع وتأخير التحقق
+ */
+const checkLoginAttempts = (ip) => {
+  if (!loginAttempts[ip]) {
+    loginAttempts[ip] = {
+      count: 0,
+      lastAttempt: 0
+    };
+  }
+
+  const now = Date.now();
+  const attempts = loginAttempts[ip];
+  
+  // تعيين توقيت آخر محاولة
+  attempts.lastAttempt = now;
+  
+  // إذا وصلت المحاولات إلى الحد الأقصى، ارفض الطلب
+  if (attempts.count >= 5) {
+    return {
+      allowed: false,
+      reason: 'العديد من محاولات تسجيل الدخول الفاشلة. يرجى المحاولة مرة أخرى لاحقًا.',
+      delay: 0
+    };
+  }
+  
+  // تأخير يزداد مع عدد المحاولات الفاشلة
+  const delay = attempts.count > 0 ? attempts.count * 1000 : 0;
+  
+  return {
+    allowed: true,
+    reason: '',
+    delay
+  };
+};
+
+/**
+ * تسجيل محاولة تسجيل دخول فاشلة
+ * @param {string} ip عنوان IP
+ * @param {string} userAgent متصفح المستخدم
+ */
+const recordFailedLoginAttempt = (ip, userAgent) => {
+  if (!loginAttempts[ip]) {
+    loginAttempts[ip] = {
+      count: 0,
+      lastAttempt: Date.now(),
+      userAgent
+    };
+  }
+  
+  loginAttempts[ip].count++;
+  loginAttempts[ip].lastAttempt = Date.now();
+};
+
+/**
+ * إعادة تعيين محاولات تسجيل الدخول لعنوان IP
+ * @param {string} ip عنوان IP
+ */
+const resetLoginAttempts = (ip) => {
+  if (loginAttempts[ip]) {
+    loginAttempts[ip].count = 0;
+    loginAttempts[ip].lastAttempt = Date.now();
+  }
+};
+
+/**
+ * إنشاء استجابة مع كوكي
+ * @param {number} statusCode رمز الحالة
+ * @param {object} body محتوى الاستجابة
+ * @param {string} cookieName اسم الكوكي
+ * @param {string} cookieValue قيمة الكوكي
+ * @returns {object} استجابة مع كوكي
+ */
+const createResponseWithCookie = (statusCode, body, cookieName, cookieValue) => {
+  const expires = new Date();
+  expires.setDate(expires.getDate() + 1); // كوكي تنتهي بعد يوم واحد
+  
+  return {
+    statusCode,
+    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      'Set-Cookie': `${cookieName}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expires.toUTCString()}`
+    }
+  };
+};
+
+/**
+ * إنشاء استجابة غير مصرح بها
+ * @param {string} message رسالة الخطأ
+ * @param {object} event كائن الحدث
+ * @param {string} resourceType نوع المورد المحمي
+ * @returns {object} استجابة غير مصرح بها
+ */
+const unauthorizedResponse = (message, event, resourceType) => {
+  return {
+    statusCode: 401,
+    body: JSON.stringify({
+      success: false,
+      message: message || 'غير مصرح به',
+      authenticated: false
+    }),
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  };
+};
+
 module.exports = {
   generateToken,
   verifyToken,
   extractAuthToken,
   requireAuth,
   requireAdmin,
-  isAuthenticated
+  isAuthenticated,
+  checkLoginAttempts,
+  recordFailedLoginAttempt,
+  resetLoginAttempts,
+  createResponseWithCookie,
+  unauthorizedResponse
 };
