@@ -388,7 +388,7 @@ export const SiteSettingsProvider: React.FC<{ children: ReactNode }> = ({ childr
   const adminLogin = async (email: string, password: string): Promise<boolean> => {
     try {
       // استخدام واجهة API بدلاً من الاتصال المباشر
-      const { adminLogin } = await import('@/lib/api');
+      const { adminLogin, logSecurityActivity } = await import('@/lib/api');
       
       // محاولة تسجيل الدخول
       const result = await adminLogin(email, password);
@@ -396,7 +396,35 @@ export const SiteSettingsProvider: React.FC<{ children: ReactNode }> = ({ childr
       if (result.success && result.token) {
         // تم تخزين الرمز بالفعل في واجهة API (في الكوكيز)
         setSettings(prev => ({ ...prev, isAdmin: true }));
+        
+        // تخزين البريد الإلكتروني للمسؤول في مخزن الجلسة
+        sessionStorage.setItem('adminEmail', email);
+        
+        // تسجيل محاولة تسجيل دخول ناجحة
+        await logSecurityActivity({
+          action: 'admin_login_success',
+          userId: email,
+          severity: 'info',
+          resourceType: 'admin_auth',
+          details: {
+            loginTime: new Date().toISOString(),
+            // لا تقم أبدًا بتسجيل كلمات المرور
+          }
+        });
+        
         return true;
+      } else {
+        // تسجيل محاولة تسجيل دخول فاشلة
+        await logSecurityActivity({
+          action: 'admin_login_failure',
+          userId: email,
+          severity: 'warning',
+          resourceType: 'admin_auth',
+          details: {
+            attemptTime: new Date().toISOString(),
+            // لا تقم أبدًا بتسجيل كلمات المرور
+          }
+        });
       }
       
       return false;
@@ -409,22 +437,38 @@ export const SiteSettingsProvider: React.FC<{ children: ReactNode }> = ({ childr
   const adminLogout = async () => {
     try {
       // استخدام واجهة API بدلاً من الاتصال المباشر
-      const { adminLogout } = await import('@/lib/api');
+      const { adminLogout, logSecurityActivity } = await import('@/lib/api');
       
       // تسجيل الخروج
       const result = await adminLogout();
+      
+      // الحصول على البريد الإلكتروني من البيانات المخزنة مؤقتًا إن وجدت
+      const cachedEmail = sessionStorage.getItem('adminEmail') || 'unknown';
+      
+      // تسجيل عملية تسجيل الخروج
+      await logSecurityActivity({
+        action: 'admin_logout',
+        userId: cachedEmail,
+        severity: 'info',
+        resourceType: 'admin_auth',
+        details: {
+          logoutTime: new Date().toISOString()
+        }
+      });
       
       // تحديث الحالة
       setSettings(prev => ({ ...prev, isAdmin: false }));
       
       // حذف الكوكي المشفر إضافيًا للتأكيد (وظيفة API تقوم بذلك أيضًا)
       document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
+      sessionStorage.removeItem('adminEmail');
     } catch (error) {
       console.error('Error during logout:', error);
       // تحديث الحالة حتى في حالة وجود خطأ
       setSettings(prev => ({ ...prev, isAdmin: false }));
       document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
       sessionStorage.removeItem('adminAuthToken');
+      sessionStorage.removeItem('adminEmail');
     }
   };
 

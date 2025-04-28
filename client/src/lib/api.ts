@@ -169,4 +169,97 @@ export const updateSocialMediaSettings = async (settings: any): Promise<{ succes
   }
 };
 
+// تسجيل نشاط أمني
+export interface SecurityLogPayload {
+  action: string;
+  userId?: string;
+  details?: any;
+  severity?: 'info' | 'warning' | 'error' | 'critical';
+  resourceType?: string;
+  resourceId?: string;
+}
+
+// واجهة برمجية لتسجيل نشاط
+export const logSecurityActivity = async (payload: SecurityLogPayload): Promise<{ success: boolean, logId?: string }> => {
+  try {
+    const response = await api.post('/security-log-activity', payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error logging security activity:', error);
+    return { success: false };
+  }
+};
+
+// واجهة برمجية للتحقق من صحة الرمز
+export const validateToken = async (): Promise<{ valid: boolean, user?: any, expires?: number }> => {
+  try {
+    const response = await api.get('/token-validate');
+    return response.data;
+  } catch (error) {
+    console.error('Error validating token:', error);
+    return { valid: false };
+  }
+};
+
+// واجهة برمجية لتحليل الأمان
+export interface SecurityThreat {
+  ip?: string;
+  email?: string;
+  type: string;
+  confidence: 'low' | 'medium' | 'high';
+  reason: string;
+  resources?: string[];
+  recommendedAction: 'monitor' | 'block_ip' | 'notify' | 'enforce_2fa';
+}
+
+export interface SecurityAnalysisResult {
+  success: boolean;
+  message: string;
+  totalLogs?: number;
+  threatCount?: number;
+  actionsTaken?: number; 
+  threats?: SecurityThreat[];
+  error?: string;
+}
+
+export const analyzeSecurity = async (): Promise<SecurityAnalysisResult> => {
+  try {
+    const response = await api.get('/security-analyze');
+    return response.data;
+  } catch (error) {
+    console.error('Error analyzing security:', error);
+    return { 
+      success: false, 
+      message: 'حدث خطأ أثناء تحليل الأمان',
+      error: error.message
+    };
+  }
+};
+
+// واجهة برمجية لتنظيف السجلات القديمة
+export interface CleanupResult {
+  success: boolean;
+  message: string;
+  deletedRecords?: {
+    accessLogs: number;
+    activityLogs: number;
+    unbannedIPs: number;
+  };
+  error?: string;
+}
+
+export const cleanupSecurityLogs = async (): Promise<CleanupResult> => {
+  try {
+    const response = await api.post('/security-cleanup');
+    return response.data;
+  } catch (error) {
+    console.error('Error cleaning up security logs:', error);
+    return { 
+      success: false, 
+      message: 'حدث خطأ أثناء تنظيف السجلات',
+      error: error.message
+    };
+  }
+};
+
 export default api;

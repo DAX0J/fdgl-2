@@ -88,5 +88,6 @@ async function logUnauthorizedAccess(event, resource) {
 }
 
 module.exports = {
-  logUnauthorizedAccess
+  logUnauthorizedAccess,
+  parseUserAgent
 };
