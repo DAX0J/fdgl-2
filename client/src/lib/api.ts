@@ -5,6 +5,9 @@ const API_BASE_URL = import.meta.env.DEV
   ? '/api'  // في بيئة التطوير
   : '/.netlify/functions'; // في بيئة الإنتاج (على Netlify)
 
+// إتاحة القاعدة للاستخدام من قبل الأدوات الأخرى
+export const getApiUrl = (): string => API_BASE_URL;
+
 // تكوين axios
 const api = axios.create({
   baseURL: API_BASE_URL,
