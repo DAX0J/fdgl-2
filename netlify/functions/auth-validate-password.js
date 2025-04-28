@@ -6,8 +6,11 @@ const {
   recordFailedLoginAttempt, 
   resetLoginAttempts,
   generateToken,
-  createResponseWithCookie
+  createResponseWithCookie,
+  unauthorizedResponse,
+  forbiddenResponse
 } = require('./utils/auth');
+const { logUnauthorizedAccess } = require('./utils/securityLogs');
 
 // Firebase تكوين
 const firebaseConfig = {
@@ -107,15 +110,9 @@ const handler = async (event, context) => {
       // تسجيل محاولة فاشلة
       recordFailedLoginAttempt(ip, userAgent);
       
-      // إرجاع استجابة فشل
-      return {
-        statusCode: 401,
-        body: JSON.stringify({ 
-          success: false, 
-          message: 'كلمة المرور غير صحيحة' 
-        }),
-        headers: { 'Content-Type': 'application/json' }
-      };
+      // تسجيل محاولة وصول غير مصرح بها واستخدام دالة unauthorizedResponse للتسجيل في قاعدة البيانات
+      logUnauthorizedAccess(event, 'site-password-validation');
+      return unauthorizedResponse('كلمة المرور غير صحيحة', event, 'site-password-validation');
     }
   } catch (error) {
     console.error('خطأ في التحقق من كلمة المرور:', error);

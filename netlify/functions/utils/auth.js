@@ -178,7 +178,17 @@ function getUserFromRequest(event) {
 /**
  * كود استجابة قياسي لطلب غير مصادق
  */
-function unauthorizedResponse(message = 'غير مصرح به') {
+function unauthorizedResponse(message = 'غير مصرح به', event = null, resource = null) {
+  // تسجيل محاولة الوصول غير المصرح بها إذا تم توفير معلومات الطلب
+  if (event && resource) {
+    try {
+      const { logUnauthorizedAccess } = require('./securityLogs');
+      logUnauthorizedAccess(event, resource);
+    } catch (error) {
+      console.error('Error logging unauthorized access:', error);
+    }
+  }
+  
   return {
     statusCode: 401,
     body: JSON.stringify({ error: message }),
@@ -191,7 +201,17 @@ function unauthorizedResponse(message = 'غير مصرح به') {
 /**
  * كود استجابة قياسي لطلب محظور
  */
-function forbiddenResponse(message = 'محظور') {
+function forbiddenResponse(message = 'محظور', event = null, resource = null) {
+  // تسجيل محاولة الوصول المحظورة إذا تم توفير معلومات الطلب
+  if (event && resource) {
+    try {
+      const { logUnauthorizedAccess } = require('./securityLogs');
+      logUnauthorizedAccess(event, resource);
+    } catch (error) {
+      console.error('Error logging forbidden access:', error);
+    }
+  }
+  
   return {
     statusCode: 403,
     body: JSON.stringify({ error: message }),

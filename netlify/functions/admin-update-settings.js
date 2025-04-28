@@ -1,12 +1,12 @@
 const { Handler } = require('@netlify/functions');
 const { initializeApp } = require('firebase/app');
-const { getDatabase, ref, set } = require('firebase/database');
+const { getDatabase, ref, update } = require('firebase/database');
 const { 
   isAuthenticated, 
-  getUserFromRequest,
-  unauthorizedResponse,
-  forbiddenResponse
+  unauthorizedResponse, 
+  forbiddenResponse 
 } = require('./utils/auth');
+const { logUnauthorizedAccess } = require('./utils/securityLogs');
 
 // Firebase تكوين
 const firebaseConfig = {
@@ -24,6 +24,91 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
+/**
+ * وظيفة للتحقق من صحة إعدادات العد التنازلي
+ */
+function validateCountdownSettings(settings) {
+  if (!settings) return false;
+  
+  // التحقق من وجود حقول إلزامية
+  if (settings.enabled === undefined) return false;
+  
+  // إذا كان العد التنازلي مفعل، التحقق من وجود تاريخ مستهدف وعنوان
+  if (settings.enabled) {
+    if (!settings.targetDate || !settings.title) return false;
+    
+    // التحقق من صحة التاريخ
+    const date = new Date(settings.targetDate);
+    if (isNaN(date.getTime())) return false;
+  }
+  
+  return true;
+}
+
+/**
+ * وظيفة للتحقق من صحة إعدادات الشحن
+ */
+function validateShippingSettings(settings) {
+  if (!settings) return false;
+  
+  // التحقق من عتبة الشحن المجاني (اختياري)
+  if (settings.freeShippingThreshold !== undefined) {
+    if (typeof settings.freeShippingThreshold !== 'number' || settings.freeShippingThreshold < 0) {
+      return false;
+    }
+  }
+  
+  // التحقق من الحد الأدنى والأقصى للسعر (اختياري)
+  if (settings.minPrice !== undefined) {
+    if (typeof settings.minPrice !== 'number' || settings.minPrice < 0) {
+      return false;
+    }
+  }
+  
+  if (settings.maxPrice !== undefined) {
+    if (typeof settings.maxPrice !== 'number' || settings.maxPrice < 0) {
+      return false;
+    }
+  }
+  
+  // التحقق من الولايات (إذا تم توفيرها)
+  if (settings.provinces !== undefined) {
+    if (!Array.isArray(settings.provinces)) return false;
+    
+    // التحقق من كل ولاية
+    for (const province of settings.provinces) {
+      if (!province.name || 
+          typeof province.homeDeliveryPrice !== 'number' || 
+          typeof province.officeDeliveryPrice !== 'number') {
+        return false;
+      }
+    }
+  }
+  
+  return true;
+}
+
+/**
+ * وظيفة للتحقق من صحة إعدادات وسائل التواصل الاجتماعي
+ */
+function validateSocialMediaSettings(settings) {
+  if (!settings) return false;
+  
+  // التحقق من الحقل الإلزامي
+  if (settings.enabled === undefined) return false;
+  
+  // التحقق من صحة الروابط (إذا كانت موجودة)
+  const socialPlatforms = ['instagram', 'twitter', 'facebook', 'youtube', 'tiktok'];
+  
+  for (const platform of socialPlatforms) {
+    if (settings[platform] !== undefined && typeof settings[platform] !== 'string') {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
 const handler = async (event, context) => {
   // التأكد من أن الطلب هو POST
   if (event.httpMethod !== 'POST') {
@@ -33,58 +118,70 @@ const handler = async (event, context) => {
       headers: { 'Content-Type': 'application/json' }
     };
   }
-
+  
   try {
-    // التحقق إذا كان المستخدم مصادق عليه
-    const authenticated = isAuthenticated(event);
-    if (!authenticated) {
-      return unauthorizedResponse('الجلسة منتهية أو غير صالحة');
+    // التحقق من المصادقة
+    const authResult = isAuthenticated(event);
+    if (!authResult.authenticated) {
+      // تسجيل محاولة وصول غير مصرح بها
+      return unauthorizedResponse('غير مصرح به', event, 'admin-settings-update');
     }
     
-    // الحصول على معلومات المستخدم
-    const user = getUserFromRequest(event);
-    
-    // التحقق إذا كان المستخدم مسؤول
-    if (!user || user.admin !== true) {
-      return forbiddenResponse('يجب أن تكون مسؤول للوصول إلى هذه الواجهة');
+    // التحقق من صلاحيات المسؤول
+    if (!authResult.user || !authResult.user.isAdmin) {
+      return forbiddenResponse('يتطلب صلاحيات مسؤول', event, 'admin-settings-update');
     }
     
-    // تحليل معلومات الطلب
+    // تحليل البيانات
     const requestBody = JSON.parse(event.body);
     const { section, settings } = requestBody;
     
     if (!section || !settings) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ 
-          success: false, 
-          message: 'يجب تحديد القسم والإعدادات'
-        }),
+        body: JSON.stringify({ success: false, message: 'البيانات غير مكتملة' }),
         headers: { 'Content-Type': 'application/json' }
       };
     }
     
-    // التحقق من صحة القسم
-    const validSections = ['countdownSettings', 'shippingSettings', 'socialMedia'];
-    if (!validSections.includes(section)) {
+    // التحقق من صحة الإعدادات حسب القسم
+    let isValid = false;
+    
+    switch (section) {
+      case 'countdownSettings':
+        isValid = validateCountdownSettings(settings);
+        break;
+      case 'shippingSettings':
+        isValid = validateShippingSettings(settings);
+        break;
+      case 'socialMedia':
+        isValid = validateSocialMediaSettings(settings);
+        break;
+      default:
+        return {
+          statusCode: 400,
+          body: JSON.stringify({ success: false, message: 'قسم غير معروف' }),
+          headers: { 'Content-Type': 'application/json' }
+        };
+    }
+    
+    if (!isValid) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ 
-          success: false, 
-          message: 'قسم غير صالح'
-        }),
+        body: JSON.stringify({ success: false, message: 'بيانات غير صالحة' }),
         headers: { 'Content-Type': 'application/json' }
       };
     }
     
-    // تحديث الإعدادات في Firebase
-    await set(ref(database, `siteSettings/${section}`), settings);
+    // تحديث البيانات في Firebase
+    const updateRef = ref(database, `siteSettings/${section}`);
+    await update(updateRef, settings);
     
     return {
       statusCode: 200,
       body: JSON.stringify({ 
         success: true, 
-        message: `تم تحديث إعدادات ${section} بنجاح`
+        message: 'تم تحديث الإعدادات بنجاح' 
       }),
       headers: { 'Content-Type': 'application/json' }
     };
@@ -95,7 +192,7 @@ const handler = async (event, context) => {
       statusCode: 500,
       body: JSON.stringify({ 
         success: false, 
-        message: 'خطأ في الخادم أثناء تحديث الإعدادات'
+        message: 'خطأ في الخادم أثناء تحديث الإعدادات' 
       }),
       headers: { 'Content-Type': 'application/json' }
     };
@@ -104,7 +201,7 @@ const handler = async (event, context) => {
 
 exports.handler = Handler(handler, {
   cors: {
-    origin: '*',  // يجب تغييره للإنتاج للسماح فقط بالمجالات المصرح بها
+    origin: '*', // يجب تغييره للإنتاج للسماح فقط بالمجالات المصرح بها
     headers: ['Content-Type', 'Authorization'],
     credentials: true
   }

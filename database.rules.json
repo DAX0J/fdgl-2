@@ -1,0 +1,101 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    
+    "siteSettings": {
+      // Public settings can be read by anyone
+      "countdownSettings": {
+        ".read": true,
+        // Only admin can write
+        ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+      },
+      "shippingSettings": {
+        ".read": true,
+        // Only admin can write
+        ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+      },
+      "socialMedia": {
+        ".read": true,
+        // Only admin can write
+        ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+      },
+      "passwordProtection": {
+        "enabled": {
+          // Anyone can read protection status
+          ".read": true,
+          // Only admin can write
+          ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+        },
+        "password": {
+          // Only admin can read/write password
+          ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+          ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+        }
+      }
+    },
+    
+    "authorizedAdminEmails": {
+      // Only current admins can read/write admin list
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+    },
+    
+    "loginAttempts": {
+      // Only admin can read login attempts
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      // Write allowed for tracking attempts (server functions)
+      ".write": true
+    },
+    
+    "ipStatus": {
+      // Only admin can read IP status
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      // Write allowed for tracking attempts (server functions)
+      ".write": true
+    },
+    
+    "products": {
+      // Anyone can read products
+      ".read": true,
+      // Only admin can update
+      ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+    },
+    
+    "orders": {
+      // Only admin can read all orders
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      
+      "$orderId": {
+        // User can read only their own orders
+        ".read": "auth != null && data.child('userId').val() === auth.uid",
+        // User can create new orders but not modify existing ones
+        ".write": "auth != null && (!data.exists() || data.child('userId').val() === auth.uid)"
+      }
+    },
+    
+    "users": {
+      // Only admin can read all user data
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      
+      "$userId": {
+        // Users can read and update only their own data
+        ".read": "auth != null && auth.uid === $userId",
+        ".write": "auth != null && auth.uid === $userId"
+      }
+    },
+    
+    // Log unauthorized access attempts
+    "accessLogs": {
+      // Only admin can read
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      // But allow writing for tracking
+      ".write": true,
+      
+      // Auto-expiration using timestamp validation (30 days)
+      "$logId": {
+        ".validate": "newData.hasChild('timestamp') && newData.child('timestamp').isNumber() && newData.child('timestamp').val() > (now - 2592000000)"
+      }
+    }
+  }
+}
