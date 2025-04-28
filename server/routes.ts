@@ -4,56 +4,76 @@ import { storage } from "./storage";
 
 // Authentication middleware to check if the user has a valid session token
 const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
-  // Skip auth check for specific paths (login, API validation, assets)
+  // قائمة المسارات التي لا تتطلب مصادقة
   const noAuthPaths = [
+    // مسارات API القديمة
     '/api/auth/validate-password',
     '/api/auth/check-protection',
-    '/api/auth/get-current-password', // Development only, remove in production
+    '/api/auth/get-current-password',
+    
+    // مسارات API الجديدة للتوافق مع Netlify Functions
+    '/api/auth-validate-password',
+    '/api/auth-check-protection',
+    '/api/auth-status',
+    
+    // الموارد الثابتة
     '/favicon.ico',
     '/assets/',
     '/_vite'
   ];
 
-  // Skip auth for whitelisted paths, include all assets and vite resources
+  // تخطي التحقق للمسارات المسموح بها وجميع الموارد الثابتة
   if (noAuthPaths.some(path => req.path.startsWith(path)) || 
       req.path.includes('assets') || 
       req.path.includes('vite') || 
       req.path.includes('.js') || 
-      req.path.includes('.css')) {
-    // Skip auth for whitelisted paths
+      req.path.includes('.css') ||
+      req.path.includes('.png') ||
+      req.path.includes('.jpg') ||
+      req.path.includes('.svg') ||
+      req.path.includes('.json')) {
+    // تخطي المصادقة للمسارات المسموح بها
     return next();
   }
 
-  // Skip auth for resources needed to load the page
+  // تخطي المصادقة للموارد اللازمة لتحميل الصفحة
   if (req.method === 'GET' && (
       req.path === '/' || 
       req.path === '/favicon.ico' || 
       req.path.startsWith('/_vite'))) {
     return next();
   }
-
-  // Check if password protection is enabled
-  const isProtectionEnabled = await storage.checkPasswordProtectionEnabled();
-  if (!isProtectionEnabled) {
-    // Password protection disabled, allow access
+  
+  // في بيئة التطوير، السماح بالوصول إلى جميع وظائف API للاختبار
+  if (process.env.NODE_ENV !== 'production' && req.path.startsWith('/api/')) {
+    console.log(`Development mode: Skipping auth for API path: ${req.path}`);
     return next();
   }
 
-  // Get token from headers
-  const token = req.headers['x-auth-token'] as string | undefined;
+  // التحقق إذا كانت حماية كلمة المرور مفعلة
+  const isProtectionEnabled = await storage.checkPasswordProtectionEnabled();
+  if (!isProtectionEnabled) {
+    // حماية كلمة المرور معطلة، السماح بالوصول
+    return next();
+  }
+
+  // الحصول على الرمز من الهيدرات أو الكوكيز
+  const token = req.headers['authorization'] as string | undefined ||
+                req.headers['x-auth-token'] as string | undefined ||
+                req.cookies?.authToken;
   
-  // Validate token
+  // التحقق من صلاحية الرمز
   const isValidToken = await storage.validateSessionToken(token);
   
-  // If no token or invalid token, reject the request
+  // إذا لم يكن هناك رمز أو كان الرمز غير صالح، رفض الطلب
   if (!isValidToken) {
-    // If this is an API request, return JSON error
+    // إذا كان هذا طلب API، إرجاع خطأ JSON
     if (req.path.startsWith('/api/')) {
       return res.status(401).json({ message: 'Unauthorized - Password required' });
     }
     
-    // For non-API requests, serve the main HTML page
-    // This allows the client-side routing to handle the password screen
+    // بالنسبة للطلبات غير الـ API، خدمة صفحة HTML الرئيسية
+    // هذا يسمح للتوجيه على جانب العميل بالتعامل مع شاشة كلمة المرور
     return next();
   }
   
@@ -65,8 +85,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Apply authentication middleware to all requests
   app.use(requireAuth);
   
+  // إعادة توجيه طلبات API إلى وظائف Netlify المحلية (ملاحظة: يستخدم هذا فقط في بيئة التطوير)
+  app.use('/api', async (req, res, next) => {
+    // تفقد إذا كان الطلب موجه إلى إحدى وظائف API التي قمنا بتنفيذها في Netlify Functions
+    const netlifyFunctions = [
+      'auth-check-protection',
+      'auth-validate-password',
+      'auth-status',
+      'admin-login',
+      'admin-logout',
+      'admin-update-password',
+      'admin-update-settings'
+    ];
+    
+    // استخراج اسم الوظيفة من المسار
+    const functionName = req.path.substring(1); // Remove the leading slash
+    
+    if (netlifyFunctions.includes(functionName)) {
+      console.log(`Redirecting API request to Netlify Function: ${functionName}`);
+      // إعادة توجيه الطلب إلى الرافعة المحلية الخاصة بـ Express (المسار الحالي سيخدم الغرض)
+      return next();
+    }
+    
+    // استمر بالطلبات الأخرى إلى المسارات المحددة أدناه
+    next();
+  });
+  
   // Authentication routes
-  app.post('/api/auth/validate-password', async (req, res) => {
+  app.post('/api/auth-validate-password', async (req, res) => {
     try {
       console.log('Validating password request received');
       const { password } = req.body;
@@ -108,17 +154,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Check if password protection is enabled
-  app.get('/api/auth/check-protection', async (req, res) => {
+  app.get('/api/auth-check-protection', async (req, res) => {
     try {
       const isEnabled = await storage.checkPasswordProtectionEnabled();
+      // تحقق من وجود رمز المصادقة في الطلب
+      const token = req.headers['authorization'] || req.cookies?.authToken;
+      const isAuthenticated = token ? await storage.validateSessionToken(token) : false;
+      
       return res.status(200).json({ 
-        enabled: isEnabled
+        enabled: isEnabled,
+        authenticated: isAuthenticated
       });
     } catch (error) {
       console.error('Error checking password protection:', error);
       return res.status(500).json({ 
         success: false, 
         message: 'Server error checking protection status'
+      });
+    }
+  });
+  
+  // التحقق من حالة المصادقة
+  app.get('/api/auth-status', async (req, res) => {
+    try {
+      // التحقق من رمز المصادقة
+      const token = req.headers['authorization'] || req.cookies?.authToken;
+      const isAuthenticated = token ? await storage.validateSessionToken(token) : false;
+      
+      // الحصول على حالة حماية كلمة المرور
+      const isProtectionEnabled = await storage.checkPasswordProtectionEnabled();
+      
+      // في النموذج الأولي، نفترض أن المستخدم ليس مسؤولاً
+      // في التنفيذ الكامل، ستحتاج إلى التحقق من رمز المسؤول والبريد الإلكتروني
+      const isAdmin = false;
+      
+      return res.status(200).json({
+        authenticated: isAuthenticated,
+        isAdmin: isAdmin,
+        passwordProtectionEnabled: isProtectionEnabled
+      });
+    } catch (error) {
+      console.error('Error checking auth status:', error);
+      return res.status(500).json({ 
+        error: 'Server error checking authentication status'
       });
     }
   });
@@ -142,7 +220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Admin routes to manage password settings
-  app.post('/api/admin/password', async (req, res) => {
+  app.post('/api/admin-update-password', async (req, res) => {
     try {
       const { password, enabled } = req.body;
       

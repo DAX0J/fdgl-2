@@ -87,150 +87,191 @@ const SiteSettingsContext = createContext<SiteSettingsContextType | undefined>(u
 export const SiteSettingsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [settings, setSettings] = useState<SiteSettings>(defaultSettings);
 
-  // Load settings from Firebase on mount
+  // تحميل الإعدادات ومعلومات المصادقة
   useEffect(() => {
-    // Initialize settings in Firebase right away
-    const initializeSettings = async () => {
-      const snapshot = await readData('siteSettings');
-      if (!snapshot.exists()) {
-        // Create initial settings
-        await writeData('siteSettings', {
-          countdownSettings: defaultSettings.countdownSettings,
-          passwordProtection: defaultSettings.passwordProtection,
-          shippingSettings: defaultSettings.shippingSettings,
-          socialMedia: defaultSettings.socialMedia,
-        });
-        console.log('Initialized default settings in Firebase');
-      }
-    };
-    
-    initializeSettings().catch(error => {
-      console.error('Error initializing settings:', error);
-    });
-    
-    const unsubscribe = watchData('siteSettings', (data) => {
-      if (data) {
-        setSettings(prev => ({
-          ...prev,
-          countdownSettings: data.countdownSettings || defaultSettings.countdownSettings,
-          passwordProtection: data.passwordProtection || defaultSettings.passwordProtection,
-          shippingSettings: data.shippingSettings || defaultSettings.shippingSettings,
-          socialMedia: data.socialMedia || defaultSettings.socialMedia,
-          isLoading: false,
-        }));
-      } else {
-        setSettings(prev => ({ ...prev, isLoading: false }));
-      }
-    });
-
-    // Check for stored unlock status in session storage
-    const storedUnlockStatus = sessionStorage.getItem('siteUnlocked');
-    if (storedUnlockStatus === 'true') {
-      setSettings(prev => ({ ...prev, isUnlocked: true }));
-    }
-
-    // التحقق من حالة دخول الأدمن
-    const checkAdminAuth = async () => {
-      try {
-        // التحقق من وجود كوكي الأدمن المشفرة
-        const cookieValue = document.cookie
-          .split('; ')
-          .find(row => row.startsWith('adminLoggedIn='))
-          ?.split('=')[1];
-        
-        if (cookieValue) {
-          // كوكي موجودة - التحقق من أنها غير منتهية الصلاحية
-          try {
-            // فك التشفير واستخراج الطابع الزمني
-            const decodedValue = atob(cookieValue);
-            const timestamp = parseInt(decodedValue.split('_')[0]);
-            
-            // التحقق من أن القيمة ليست قديمة (أقل من 24 ساعة)
-            const isValid = !isNaN(timestamp) && Date.now() - timestamp < 24 * 60 * 60 * 1000;
-            
-            if (isValid) {
-              // تحديث حالة الدخول
-              setSettings(prev => ({ ...prev, isAdmin: true }));
-            } else {
-              // حذف كوكي منتهية الصلاحية
-              document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
-            }
-          } catch (e) {
-            // خطأ في فك التشفير - حذف الكوكي غير الصالحة
-            document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
-          }
-          return;
-        }
-        
-        // التحقق من فايربيس إذا لم توجد كوكي
-        const { getCurrentUser } = await import('@/lib/firebase');
-        const currentUser = getCurrentUser();
-        
-        if (currentUser) {
-          // التحقق من بريد المستخدم ضمن قائمة الأدمن المصرح لهم
-          const adminEmailsSnapshot = await readData('authorizedAdminEmails');
-          const authorizedEmails = adminEmailsSnapshot.val() || {};
+    // استيراد وظائف API
+    import('@/lib/api').then(({ checkSiteProtection, checkAuthStatus }) => {
+      // التحقق من حالة حماية كلمة المرور أولاً
+      const loadSiteProtection = async () => {
+        try {
+          const { enabled, authenticated } = await checkSiteProtection();
           
-          if (Object.keys(authorizedEmails).includes(currentUser.email || '')) {
-            // إنشاء كوكي جديدة
-            const encryptedValue = btoa(`${Date.now()}_${currentUser.email}_${Math.random().toString(36).substring(2)}`);
-            document.cookie = `adminLoggedIn=${encryptedValue}; path=/; max-age=86400; SameSite=Strict; Secure`;
-            setSettings(prev => ({ ...prev, isAdmin: true }));
-          } else {
-            // تسجيل الخروج إذا لم يكن مصرح له
-            const { logout } = await import('@/lib/firebase');
-            await logout();
+          // تحديث حالة الإعدادات
+          setSettings(prev => ({
+            ...prev,
+            passwordProtection: {
+              ...prev.passwordProtection,
+              enabled: enabled
+            },
+            isUnlocked: authenticated || !enabled,
+          }));
+          
+          // إذا كانت الحماية معطلة، تخزين حالة الدخول
+          if (!enabled) {
+            sessionStorage.setItem('siteUnlocked', 'true');
           }
+        } catch (error) {
+          console.error('Error checking site protection:', error);
         }
+      };
+      
+      // تحميل إعدادات الموقع من Firebase عبر الدالة المساعدة
+      const loadSettingsFromFirebase = async () => {
+        try {
+          // استخدام Firebase مباشرة فقط لتحميل الإعدادات العامة غير الحساسة
+          const { readData } = await import('@/lib/firebase');
+          
+          // تحميل إعدادات العد التنازلي
+          const countdownSnapshot = await readData('siteSettings/countdownSettings');
+          if (countdownSnapshot.exists()) {
+            setSettings(prev => ({
+              ...prev,
+              countdownSettings: countdownSnapshot.val() || defaultSettings.countdownSettings
+            }));
+          }
+          
+          // تحميل إعدادات الشحن
+          const shippingSnapshot = await readData('siteSettings/shippingSettings');
+          if (shippingSnapshot.exists()) {
+            setSettings(prev => ({
+              ...prev,
+              shippingSettings: shippingSnapshot.val() || defaultSettings.shippingSettings
+            }));
+          }
+          
+          // تحميل إعدادات وسائل التواصل الاجتماعي
+          const socialMediaSnapshot = await readData('siteSettings/socialMedia');
+          if (socialMediaSnapshot.exists()) {
+            setSettings(prev => ({
+              ...prev,
+              socialMedia: socialMediaSnapshot.val() || defaultSettings.socialMedia
+            }));
+          }
+          
+          setSettings(prev => ({ ...prev, isLoading: false }));
+        } catch (error) {
+          console.error('Error loading settings from Firebase:', error);
+          setSettings(prev => ({ ...prev, isLoading: false }));
+        }
+      };
+      
+      // التحقق من حالة المصادقة
+      const checkAuthentication = async () => {
+        try {
+          // تحقق من قيمة authToken و siteUnlocked في sessionStorage أولاً
+          const storedUnlockStatus = sessionStorage.getItem('siteUnlocked');
+          const adminAuthToken = sessionStorage.getItem('adminAuthToken');
+          
+          // تحديث حالة فتح الموقع إذا كانت موجودة في التخزين
+          if (storedUnlockStatus === 'true') {
+            setSettings(prev => ({ ...prev, isUnlocked: true }));
+          }
+          
+          // التحقق من حالة المصادقة بالكامل من الخادم
+          const authStatus = await checkAuthStatus();
+          
+          setSettings(prev => ({
+            ...prev,
+            isUnlocked: authStatus.authenticated || prev.isUnlocked,
+            isAdmin: authStatus.isAdmin,
+            passwordProtection: {
+              ...prev.passwordProtection,
+              enabled: authStatus.passwordProtectionEnabled
+            }
+          }));
+        } catch (error) {
+          console.error('Error checking auth status:', error);
+        }
+      };
+      
+      // تنفيذ الوظائف بالتتابع
+      loadSiteProtection()
+        .then(loadSettingsFromFirebase)
+        .then(checkAuthentication)
+        .catch(error => {
+          console.error('Error in settings initialization:', error);
+          setSettings(prev => ({ ...prev, isLoading: false }));
+        });
+    });
+    
+    // إعداد مراقبة التغييرات في Firebase لتحديث الإعدادات لحظيًا
+    const setupFirebaseWatcher = async () => {
+      try {
+        const { watchData } = await import('@/lib/firebase');
+        
+        // مراقبة التغييرات في إعدادات الموقع
+        return watchData('siteSettings', (data) => {
+          if (data) {
+            setSettings(prev => ({
+              ...prev,
+              countdownSettings: data.countdownSettings || prev.countdownSettings,
+              passwordProtection: {
+                ...prev.passwordProtection,
+                enabled: data.passwordProtection?.enabled ?? prev.passwordProtection.enabled
+              },
+              shippingSettings: data.shippingSettings || prev.shippingSettings,
+              socialMedia: data.socialMedia || prev.socialMedia,
+            }));
+          }
+        });
       } catch (error) {
-        console.error('Error checking admin auth status:', error);
+        console.error('Error setting up Firebase watcher:', error);
+        return () => {}; // إرجاع دالة فارغة في حالة الخطأ
       }
     };
     
-    checkAdminAuth();
-
+    // إعداد مراقبة التغييرات وتخزين دالة الإلغاء
+    let unsubscribeFirebase: (() => void) | undefined;
+    setupFirebaseWatcher().then(unsubscribe => {
+      unsubscribeFirebase = unsubscribe;
+    });
+    
+    // تنظيف عند تفكيك المكون
     return () => {
-      if (typeof unsubscribe === 'function') {
-        unsubscribe();
+      if (typeof unsubscribeFirebase === 'function') {
+        unsubscribeFirebase();
       }
     };
   }, []);
 
   const unlockSite = async (password: string): Promise<boolean> => {
     try {
-      // Validate password directly from Firebase
-      const snapshot = await readData('siteSettings/passwordProtection/password');
-      const correctPassword = snapshot.val();
+      // استخدام واجهة API بدلاً من الاتصال المباشر بـ Firebase
+      const { validateSitePassword } = await import('@/lib/api');
+      const result = await validateSitePassword(password);
       
-      if (password === correctPassword) {
-        // Store unlocked state and generate a simple token
-        const simpleToken = btoa(`${new Date().getTime()}_${Math.random().toString(36).substr(2, 9)}`);
-        sessionStorage.setItem('siteUnlocked', 'true');
-        sessionStorage.setItem('authToken', simpleToken);
+      if (result.success) {
+        // تم تخزين الرمز بالفعل في واجهة API
         setSettings(prev => ({ ...prev, isUnlocked: true }));
         return true;
       }
       return false;
     } catch (error) {
-      console.error('Error unlocking site with Firebase:', error);
+      console.error('Error unlocking site:', error);
       return false;
     }
   };
 
   const togglePasswordProtection = async (enabled: boolean): Promise<void> => {
     try {
-      // Update Firebase only
-      await writeData('siteSettings/passwordProtection/enabled', enabled);
-      console.log(`Password protection ${enabled ? 'enabled' : 'disabled'} in Firebase`);
+      // استخدام واجهة API بدلاً من الاتصال المباشر بـ Firebase
+      const { updatePasswordSettings } = await import('@/lib/api');
+      const result = await updatePasswordSettings({ enabled });
       
-      // Update local state
-      setSettings(prev => ({
-        ...prev,
-        passwordProtection: {
-          ...prev.passwordProtection,
-          enabled,
-        },
-      }));
+      if (result.success) {
+        console.log(`Password protection ${enabled ? 'enabled' : 'disabled'} successfully`);
+        
+        // تحديث الحالة المحلية
+        setSettings(prev => ({
+          ...prev,
+          passwordProtection: {
+            ...prev.passwordProtection,
+            enabled,
+          },
+        }));
+      } else {
+        throw new Error('Failed to update password protection');
+      }
     } catch (error) {
       console.error('Error toggling password protection:', error);
       alert('Error updating password protection setting. Please try again.');
@@ -239,93 +280,121 @@ export const SiteSettingsProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const changePassword = async (newPassword: string): Promise<void> => {
     try {
-      // Update only in Firebase
-      console.log('Updating password in Firebase to:', newPassword);
-      await writeData('siteSettings/passwordProtection/password', newPassword);
-      console.log('Password updated in Firebase');
+      // استخدام واجهة API بدلاً من الاتصال المباشر بـ Firebase
+      const { updatePasswordSettings } = await import('@/lib/api');
+      const result = await updatePasswordSettings({ password: newPassword });
       
-      // Update local state
-      setSettings(prev => ({
-        ...prev,
-        passwordProtection: {
-          ...prev.passwordProtection,
-          password: newPassword,
-        },
-      }));
-      
-      // Provide visual feedback
-      alert('Password updated successfully!');
+      if (result.success) {
+        console.log('Password updated successfully');
+        
+        // تحديث الحالة المحلية
+        setSettings(prev => ({
+          ...prev,
+          passwordProtection: {
+            ...prev.passwordProtection,
+            password: newPassword,
+          },
+        }));
+        
+        // توفير تنبيه نجاح
+        alert('تم تحديث كلمة المرور بنجاح!');
+      } else {
+        throw new Error('فشل تحديث كلمة المرور');
+      }
     } catch (error) {
       console.error('Error changing password:', error);
-      alert('Error changing password. Please try again.');
+      alert('خطأ في تغيير كلمة المرور. يرجى المحاولة مرة أخرى.');
     }
   };
 
   const updateCountdownSettings = async (newSettings: Partial<CountdownSettings>): Promise<void> => {
-    const updatedSettings = {
-      ...settings.countdownSettings,
-      ...newSettings,
-    };
-    
-    await writeData('siteSettings/countdownSettings', updatedSettings);
-    setSettings(prev => ({
-      ...prev,
-      countdownSettings: updatedSettings,
-    }));
+    try {
+      const updatedSettings = {
+        ...settings.countdownSettings,
+        ...newSettings,
+      };
+      
+      // استخدام واجهة API بدلاً من الاتصال المباشر بـ Firebase
+      const { updateCountdownSettings } = await import('@/lib/api');
+      const result = await updateCountdownSettings(updatedSettings);
+      
+      if (result.success) {
+        // تحديث الحالة المحلية
+        setSettings(prev => ({
+          ...prev,
+          countdownSettings: updatedSettings,
+        }));
+      } else {
+        throw new Error('فشل تحديث إعدادات العد التنازلي');
+      }
+    } catch (error) {
+      console.error('Error updating countdown settings:', error);
+      alert('حدث خطأ أثناء تحديث إعدادات العد التنازلي. يرجى المحاولة مرة أخرى.');
+    }
   };
   
   const updateShippingSettings = async (newSettings: Partial<ShippingSettings>): Promise<void> => {
-    const updatedSettings = {
-      ...settings.shippingSettings,
-      ...newSettings,
-    };
-    
-    await writeData('siteSettings/shippingSettings', updatedSettings);
-    setSettings(prev => ({
-      ...prev,
-      shippingSettings: updatedSettings,
-    }));
+    try {
+      const updatedSettings = {
+        ...settings.shippingSettings,
+        ...newSettings,
+      };
+      
+      // استخدام واجهة API بدلاً من الاتصال المباشر بـ Firebase
+      const { updateShippingSettings } = await import('@/lib/api');
+      const result = await updateShippingSettings(updatedSettings);
+      
+      if (result.success) {
+        // تحديث الحالة المحلية
+        setSettings(prev => ({
+          ...prev,
+          shippingSettings: updatedSettings,
+        }));
+      } else {
+        throw new Error('فشل تحديث إعدادات الشحن');
+      }
+    } catch (error) {
+      console.error('Error updating shipping settings:', error);
+      alert('حدث خطأ أثناء تحديث إعدادات الشحن. يرجى المحاولة مرة أخرى.');
+    }
   };
   
   const updateSocialMediaSettings = async (newSettings: Partial<SocialMediaSettings>): Promise<void> => {
-    const updatedSettings = {
-      ...settings.socialMedia,
-      ...newSettings,
-    };
-    
-    await writeData('siteSettings/socialMedia', updatedSettings);
-    setSettings(prev => ({
-      ...prev,
-      socialMedia: updatedSettings,
-    }));
+    try {
+      const updatedSettings = {
+        ...settings.socialMedia,
+        ...newSettings,
+      };
+      
+      // استخدام واجهة API بدلاً من الاتصال المباشر بـ Firebase
+      const { updateSocialMediaSettings } = await import('@/lib/api');
+      const result = await updateSocialMediaSettings(updatedSettings);
+      
+      if (result.success) {
+        // تحديث الحالة المحلية
+        setSettings(prev => ({
+          ...prev,
+          socialMedia: updatedSettings,
+        }));
+      } else {
+        throw new Error('فشل تحديث إعدادات وسائل التواصل الاجتماعي');
+      }
+    } catch (error) {
+      console.error('Error updating social media settings:', error);
+      alert('حدث خطأ أثناء تحديث إعدادات وسائل التواصل الاجتماعي. يرجى المحاولة مرة أخرى.');
+    }
   };
 
   const adminLogin = async (email: string, password: string): Promise<boolean> => {
     try {
-      // Import the authentication utilities
-      const { authenticateAdmin, checkIPStatus } = await import('@/lib/adminAuthUtils');
+      // استخدام واجهة API بدلاً من الاتصال المباشر
+      const { adminLogin } = await import('@/lib/api');
       
-      // Check IP status first (banned or cooldown)
-      const ipStatus = await checkIPStatus();
+      // محاولة تسجيل الدخول
+      const result = await adminLogin(email, password);
       
-      if (ipStatus.banned) {
-        console.error('IP banned from admin login attempts');
-        return false;
-      }
-      
-      if (ipStatus.cooldown) {
-        const secondsRemaining = Math.ceil((ipStatus.cooldown - Date.now()) / 1000);
-        console.error(`Too many login attempts. Please try again in ${secondsRemaining} seconds.`);
-        return false;
-      }
-      
-      // Attempt to authenticate with Firebase
-      const success = await authenticateAdmin(email, password);
-      
-      if (success) {
-        // استخدم طريقة تشفير بسيطة (في الإنتاج استخدم تشفير أقوى)
-        const encryptedValue = btoa(`${Date.now()}_${email}_${Math.random().toString(36).substring(2)}`);
-        document.cookie = `adminLoggedIn=${encryptedValue}; path=/; max-age=86400; SameSite=Strict; Secure`;
+      if (result.success && result.token) {
+        // تم تخزين الرمز بالفعل في واجهة API (في الكوكيز)
         setSettings(prev => ({ ...prev, isAdmin: true }));
         return true;
       }
@@ -339,22 +408,23 @@ export const SiteSettingsProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const adminLogout = async () => {
     try {
-      // Import the Firebase auth logout
-      const { logout } = await import('@/lib/firebase');
+      // استخدام واجهة API بدلاً من الاتصال المباشر
+      const { adminLogout } = await import('@/lib/api');
       
-      // Sign out of Firebase
-      await logout();
+      // تسجيل الخروج
+      const result = await adminLogout();
       
-      // حذف الكوكي المشفر
-      document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
-      
-      // Update state
+      // تحديث الحالة
       setSettings(prev => ({ ...prev, isAdmin: false }));
+      
+      // حذف الكوكي المشفر إضافيًا للتأكيد (وظيفة API تقوم بذلك أيضًا)
+      document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
     } catch (error) {
       console.error('Error during logout:', error);
-      // Still clear cookie and update state even if Firebase logout fails
-      document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
+      // تحديث الحالة حتى في حالة وجود خطأ
       setSettings(prev => ({ ...prev, isAdmin: false }));
+      document.cookie = "adminLoggedIn=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict; Secure";
+      sessionStorage.removeItem('adminAuthToken');
     }
   };
 
