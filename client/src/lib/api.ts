@@ -226,12 +226,12 @@ export const analyzeSecurity = async (): Promise<SecurityAnalysisResult> => {
   try {
     const response = await api.get('/security-analyze');
     return response.data;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error analyzing security:', error);
     return { 
       success: false, 
       message: 'حدث خطأ أثناء تحليل الأمان',
-      error: error.message
+      error: error?.message || 'خطأ غير معروف'
     };
   }
 };
@@ -252,12 +252,12 @@ export const cleanupSecurityLogs = async (): Promise<CleanupResult> => {
   try {
     const response = await api.post('/security-cleanup');
     return response.data;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error cleaning up security logs:', error);
     return { 
       success: false, 
       message: 'حدث خطأ أثناء تنظيف السجلات',
-      error: error.message
+      error: error?.message || 'خطأ غير معروف'
     };
   }
 };
