@@ -101,7 +101,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       'security-analyze',
       'security-cleanup',
       'security-log-activity',
-      'token-validate'
+      'token-validate',
+      'check-ip-status',
+      'create-payment-intent'
     ];
     
     // استخراج اسم الوظيفة من المسار
