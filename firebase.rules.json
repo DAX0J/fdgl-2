@@ -43,16 +43,38 @@
       ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
     },
     
-    "loginAttempts": {
-      // السماح فقط بالكتابة من وظائف Netlify
+    "security": {
+      // فقط المسؤولين يمكنهم قراءة جميع سجلات الأمان
       ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
-      ".write": true
-    },
-    
-    "ipStatus": {
-      // السماح فقط بالكتابة من وظائف Netlify
-      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
-      ".write": true
+      
+      "loginAttempts": {
+        // السماح فقط بالكتابة من وظائف Netlify
+        ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+        ".write": true
+      },
+      
+      "ipStatus": {
+        // السماح فقط بالكتابة من وظائف Netlify
+        ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+        ".write": true
+      },
+      
+      "activityLogs": {
+        // السماح فقط بالكتابة من وظائف Netlify
+        ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+        ".write": true
+      },
+      
+      "sessions": {
+        // السماح بالكتابة فقط من وظائف Netlify
+        ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+        ".write": true,
+        
+        "$sessionId": {
+          // يمكن للمستخدم قراءة جلسته الخاصة
+          ".read": "auth != null && data.child('userId').val() === auth.uid"
+        }
+      }
     },
     
     "products": {
@@ -70,7 +92,9 @@
         // يمكن للمستخدم قراءة طلباته الخاصة
         ".read": "auth != null && data.child('userId').val() === auth.uid",
         // يمكن للمستخدم إنشاء طلب جديد، ولكن لا يمكنه تعديل الطلبات الموجودة
-        ".write": "auth != null && !data.exists()"
+        ".write": "auth != null && !data.exists()",
+        // يمكن للمسؤول تحديث حالة الطلبات
+        ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
       }
     },
     
