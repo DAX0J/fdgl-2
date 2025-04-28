@@ -2,6 +2,12 @@ import { readData, writeData, updateData, pushData } from './firebase';
 import { UAParser } from 'ua-parser-js';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 
+// Helper function to sanitize IP addresses for Firebase paths
+// Firebase paths can't contain ".", "#", "$", "[", or "]"
+const sanitizeIPForFirebase = (ip: string): string => {
+  return ip.replace(/\./g, '_');
+};
+
 interface LoginAttempt {
   ip: string;
   email: string;
@@ -76,8 +82,11 @@ export const checkIPStatus = async (): Promise<{ banned: boolean; cooldown: numb
     const ipData = await ipResponse.json();
     const ip = ipData.ip;
     
+    // Sanitize IP for Firebase path
+    const safeIP = sanitizeIPForFirebase(ip);
+    
     // Check if IP exists in Firebase
-    const snapshot = await readData(`bannedIPs/${ip}`);
+    const snapshot = await readData(`bannedIPs/${safeIP}`);
     const ipStatus = snapshot.val() as IPStatus | null;
     
     if (!ipStatus) {
@@ -107,15 +116,18 @@ export const checkIPStatus = async (): Promise<{ banned: boolean; cooldown: numb
  */
 const updateIPStatus = async (ip: string): Promise<void> => {
   try {
+    // Sanitize IP for Firebase path
+    const safeIP = sanitizeIPForFirebase(ip);
+    
     // Check if IP exists in Firebase
-    const snapshot = await readData(`bannedIPs/${ip}`);
+    const snapshot = await readData(`bannedIPs/${safeIP}`);
     const ipStatus = snapshot.val() as IPStatus | null;
     
     const now = Date.now();
     
     if (!ipStatus) {
       // First failed attempt
-      await writeData(`bannedIPs/${ip}`, {
+      await writeData(`bannedIPs/${safeIP}`, {
         ip,
         failedAttempts: 1,
         lastAttemptTime: now,
@@ -142,7 +154,7 @@ const updateIPStatus = async (ip: string): Promise<void> => {
       updatedStatus.banned = true;
     }
     
-    await writeData(`bannedIPs/${ip}`, updatedStatus);
+    await writeData(`bannedIPs/${safeIP}`, updatedStatus);
   } catch (error) {
     console.error('Error updating IP status:', error);
   }

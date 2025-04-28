@@ -1,0 +1,79 @@
+api-BrXEyjhT.js:1 Error checking site protection status: m
+c @ api-BrXEyjhT.js:1Understand this error
+adminAuthUtils-C6hz7M8-.js:1 Error checking IP status: Error: child failed: path argument was an invalid path = "bannedIPs/105.109.121.104". Paths must be non-empty strings and can't contain ".", "#", "$", "[", or "]"
+    at MT (index-O5i1LWZ-.js:1635:1237)
+    at iV (index-O5i1LWZ-.js:1635:1429)
+    at al (index-O5i1LWZ-.js:1740:1611)
+    at Al (index-O5i1LWZ-.js:1740:1539)
+    at Bt (index-O5i1LWZ-.js:2790:1880)
+    at ve (adminAuthUtils-C6hz7M8-.js:1:24728)
+    at async AdminPage-BW5uvaqz.js:2:11402
+ve @ adminAuthUtils-C6hz7M8-.js:1Understand this error
+api-BrXEyjhT.js:1 Error checking authentication status: m {message: 'Request failed with status code 502', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
+p @ api-BrXEyjhT.js:1Understand this error
+api-BrXEyjhT.js:1 Error during admin login: m {message: 'Request failed with status code 502', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
+u @ api-BrXEyjhT.js:1
+await in u
+c @ index-O5i1LWZ-.js:2790
+await in c
+n @ AdminPage-BW5uvaqz.js:2
+eN @ index-O5i1LWZ-.js:38
+nN @ index-O5i1LWZ-.js:38
+rN @ index-O5i1LWZ-.js:38
+Uy @ index-O5i1LWZ-.js:38
+qS @ index-O5i1LWZ-.js:38
+(anonymous) @ index-O5i1LWZ-.js:38
+rg @ index-O5i1LWZ-.js:41
+yS @ index-O5i1LWZ-.js:38
+xh @ index-O5i1LWZ-.js:38
+Rm @ index-O5i1LWZ-.js:38
+wN @ index-O5i1LWZ-.js:38Understand this error
+api-BrXEyjhT.js:1 Error logging security activity: m {message: 'Request failed with status code 502', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
+y @ api-BrXEyjhT.js:1
+await in y
+c @ index-O5i1LWZ-.js:2790
+await in c
+n @ AdminPage-BW5uvaqz.js:2
+eN @ index-O5i1LWZ-.js:38
+nN @ index-O5i1LWZ-.js:38
+rN @ index-O5i1LWZ-.js:38
+Uy @ index-O5i1LWZ-.js:38
+qS @ index-O5i1LWZ-.js:38
+(anonymous) @ index-O5i1LWZ-.js:38
+rg @ index-O5i1LWZ-.js:41
+yS @ index-O5i1LWZ-.js:38
+xh @ index-O5i1LWZ-.js:38
+Rm @ index-O5i1LWZ-.js:38
+wN @ index-O5i1LWZ-.js:38Understand this error
+adminAuthUtils-C6hz7M8-.js:1 Error checking IP status: Error: child failed: path argument was an invalid path = "bannedIPs/105.109.121.104". Paths must be non-empty strings and can't contain ".", "#", "$", "[", or "]"
+    at MT (index-O5i1LWZ-.js:1635:1237)
+    at iV (index-O5i1LWZ-.js:1635:1429)
+    at al (index-O5i1LWZ-.js:1740:1611)
+    at Al (index-O5i1LWZ-.js:1740:1539)
+    at Bt (index-O5i1LWZ-.js:2790:1880)
+    at ve (adminAuthUtils-C6hz7M8-.js:1:24728)
+    at async n (AdminPage-BW5uvaqz.js:2:12314)
+ve @ adminAuthUtils-C6hz7M8-.js:1
+await in ve
+n @ AdminPage-BW5uvaqz.js:2
+await in n
+eN @ index-O5i1LWZ-.js:38
+nN @ index-O5i1LWZ-.js:38
+rN @ index-O5i1LWZ-.js:38
+Uy @ index-O5i1LWZ-.js:38
+qS @ index-O5i1LWZ-.js:38
+(anonymous) @ index-O5i1LWZ-.js:38
+rg @ index-O5i1LWZ-.js:41
+yS @ index-O5i1LWZ-.js:38
+xh @ index-O5i1LWZ-.js:38
+Rm @ index-O5i1LWZ-.js:38
+wN @ index-O5i1LWZ-.js:38Understand this error
+adminAuthUtils-C6hz7M8-.js:1 Error updating IP status: Error: child failed: path argument was an invalid path = "bannedIPs/105.109.121.104". Paths must be non-empty strings and can't contain ".", "#", "$", "[", or "]"
+    at MT (index-O5i1LWZ-.js:1635:1237)
+    at iV (index-O5i1LWZ-.js:1635:1429)
+    at al (index-O5i1LWZ-.js:1740:1611)
+    at Al (index-O5i1LWZ-.js:1740:1539)
+    at Bt (index-O5i1LWZ-.js:2790:1880)
+    at he (adminAuthUtils-C6hz7M8-.js:1:25054)
+    at ge (adminAuthUtils-C6hz7M8-.js:1:24560)
+    at async n (AdminPage-BW5uvaqz.js:2:12917)
