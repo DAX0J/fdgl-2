@@ -9,6 +9,8 @@ const {
   generateToken,
   createResponseWithCookie
 } = require('./utils/auth');
+const { sanitizeIPForFirebase, getIPFromRequest } = require('./utils/util');
+const { trackLoginAttempt, updateIPStatus, checkIPStatus } = require('./utils/securityLogs');
 
 // Firebase تكوين
 const firebaseConfig = {
@@ -59,97 +61,8 @@ function parseUserAgent(userAgent) {
   return { browser, os, device };
 }
 
-/**
- * تسجيل محاولة تسجيل الدخول في Firebase
- */
-async function trackLoginAttempt(email, ip, userAgent, success) {
-  try {
-    const deviceInfo = parseUserAgent(userAgent);
-    
-    // إنشاء كائن محاولة تسجيل الدخول
-    const loginAttempt = {
-      ip: ip,
-      email: email,
-      timestamp: Date.now(),
-      userAgent: userAgent,
-      success: success,
-      deviceInfo: deviceInfo
-    };
-    
-    // تسجيل محاولة تسجيل الدخول في Firebase
-    const attemptRef = ref(database, `loginAttempts/${Date.now()}`);
-    await set(attemptRef, loginAttempt);
-    
-    // تحديث حالة IP إذا كانت محاولة فاشلة
-    if (!success) {
-      await updateIPStatus(ip);
-    }
-  } catch (error) {
-    console.error('خطأ في تسجيل محاولة تسجيل الدخول:', error);
-  }
-}
-
-/**
- * تحديث حالة IP بعد محاولة فاشلة
- */
-async function updateIPStatus(ip) {
-  try {
-    // الحصول على حالة IP الحالية
-    const ipStatusRef = ref(database, `ipStatus/${ip.replace(/\./g, '_')}`);
-    const ipStatusSnapshot = await get(ipStatusRef);
-    const ipStatus = ipStatusSnapshot.val() || {
-      ip: ip,
-      failedAttempts: 0,
-      lastAttemptTime: 0,
-      cooldownUntil: null,
-      banned: false
-    };
-    
-    // تحديث عدد المحاولات الفاشلة
-    ipStatus.failedAttempts += 1;
-    ipStatus.lastAttemptTime = Date.now();
-    
-    // التحقق إذا كان يجب وضع IP في فترة تهدئة
-    if (ipStatus.failedAttempts >= 5 && !ipStatus.cooldownUntil) {
-      // وضع IP في فترة تهدئة لمدة 10 دقائق
-      ipStatus.cooldownUntil = Date.now() + 10 * 60 * 1000;
-    }
-    
-    // التحقق إذا كان يجب حظر IP
-    if (ipStatus.failedAttempts >= 20 && !ipStatus.banned) {
-      ipStatus.banned = true;
-    }
-    
-    // حفظ حالة IP المحدثة
-    await set(ipStatusRef, ipStatus);
-  } catch (error) {
-    console.error('خطأ في تحديث حالة IP:', error);
-  }
-}
-
-/**
- * التحقق من حالة IP
- */
-async function checkIPStatus(ip) {
-  try {
-    const ipStatusRef = ref(database, `ipStatus/${ip.replace(/\./g, '_')}`);
-    const ipStatusSnapshot = await get(ipStatusRef);
-    const ipStatus = ipStatusSnapshot.val();
-    
-    if (!ipStatus) {
-      return { banned: false, cooldown: null };
-    }
-    
-    return {
-      banned: ipStatus.banned === true,
-      cooldown: ipStatus.cooldownUntil && ipStatus.cooldownUntil > Date.now() ? 
-        ipStatus.cooldownUntil : null
-    };
-  } catch (error) {
-    console.error('خطأ في التحقق من حالة IP:', error);
-    return { banned: false, cooldown: null };
-  }
-}
+// تمت إزالة تعريفات الوظائف المكررة trackLoginAttempt و updateIPStatus و checkIPStatus
+// والاعتماد بدلاً من ذلك على الوظائف المستوردة من ملف utils/securityLogs.js
 
 /**
  * التحقق من صلاحية البريد الإلكتروني للمسؤول
@@ -181,7 +94,7 @@ const handler = async (event, context) => {
 
   try {
     // الحصول على معلومات العميل
-    const ip = event.headers['client-ip'] || event.headers['x-forwarded-for'] || 'unknown-ip';
+    const ip = getIPFromRequest(event);
     const userAgent = event.headers['user-agent'] || 'unknown-ua';
 
     // التحقق من حالة IP
