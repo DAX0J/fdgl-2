@@ -1,33 +1,23 @@
 // ملف مساعد للتعامل مع CORS في وظائف Netlify
 
-/**
- * التحقق ما إذا كان المصدر مسموح به
- * @param {string} origin المصدر الذي يجب التحقق منه
- * @returns {boolean} ما إذا كان المصدر مسموح به
- */
-const isOriginAllowed = (origin) => {
-  // قائمة المصادر المسموح بها
-  const allowedOrigins = [
-    'http://localhost:5000',
-    'https://e2-com-10-2024-to-11-2024.netlify.app'
-  ];
+// قائمة الأصول المسموح بها (يمكن تغييرها حسب الحاجة)
+const allowedOrigins = [
+  'http://localhost:5000',
+  'http://localhost:3000',
+  'https://e2-com-10-2024-to-11-2024.netlify.app'
+];
 
+// التحقق ما إذا كان المصدر مسموح به
+const isOriginAllowed = (origin) => {
   // إذا كانت هناك قائمة مصادر محددة في متغيرات البيئة، استخدمها
   if (process.env.ALLOWED_ORIGINS) {
     const originsFromEnv = process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim());
-    allowedOrigins.push(...originsFromEnv);
+    return allowedOrigins.concat(originsFromEnv).includes(origin);
   }
-
-  // التحقق ما إذا كان المصدر المحدد مسموح به
   return allowedOrigins.includes(origin);
 };
 
-/**
- * إضافة رؤوس CORS للاستجابة
- * @param {Object} event كائن الحدث من Netlify Function
- * @param {Object} response كائن الاستجابة الذي سيتم إضافة رؤوس CORS إليه
- * @returns {Object} الاستجابة مع رؤوس CORS
- */
+// إضافة رؤوس CORS للاستجابة
 const addCorsHeaders = (event, response) => {
   const origin = event.headers.origin || event.headers.Origin;
   const headers = response.headers || {};
@@ -45,12 +35,7 @@ const addCorsHeaders = (event, response) => {
   return { ...response, headers };
 };
 
-/**
- * معالجة طلبات CORS للوظائف السحابية
- * @param {Object} event كائن الحدث من Netlify Function
- * @param {Object} handler دالة معالج الوظيفة السحابية
- * @returns {Object|Function} استجابة لطلب CORS أو استدعاء المعالج
- */
+// معالجة طلبات CORS للوظائف السحابية
 const handleCors = (event, handler) => {
   const origin = event.headers.origin || event.headers.Origin;
   
@@ -58,7 +43,7 @@ const handleCors = (event, handler) => {
   if (event.httpMethod === 'OPTIONS') {
     if (origin && isOriginAllowed(origin)) {
       return {
-        statusCode: 204,
+        statusCode: 204, // No content for preflight requests
         headers: {
           'Access-Control-Allow-Origin': origin,
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -84,8 +69,16 @@ const handleCors = (event, handler) => {
     };
   }
 
-  // استمر بمعالجة الطلب واستخدم المعالج الأساسي
-  return handler(event);
+  // استمر بمعالجة الطلب من خلال المعالج المقدم
+  const result = handler(event);
+  
+  // إذا كان النتيجة عبارة عن Promise، قم بإضافة رؤوس CORS إلى الاستجابة النهائية
+  if (result instanceof Promise) {
+    return result.then(response => addCorsHeaders(event, response));
+  }
+  
+  // وإلا، قم بإضافة رؤوس CORS إلى الاستجابة المباشرة
+  return addCorsHeaders(event, result);
 };
 
 module.exports = {
