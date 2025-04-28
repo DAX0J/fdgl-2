@@ -7,6 +7,21 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-do-not-use-in-produ
 const JWT_EXPIRY = '24h'; // مدة صلاحية الرمز
 
 /**
+ * التحقق مما إذا كان المستخدم مصادقًا عليه
+ * @param {object} event كائن الحدث من Netlify Function
+ * @returns {boolean} ما إذا كان المستخدم مصادقًا عليه
+ */
+const isAuthenticated = (event) => {
+  const token = extractAuthToken(event);
+  if (!token) {
+    return false;
+  }
+  
+  const decoded = verifyToken(token);
+  return decoded !== null;
+};
+
+/**
  * إنشاء رمز JWT للمستخدم المصادق عليه
  * @param {string} uid معرف المستخدم
  * @param {object} additionalClaims معلومات إضافية لتضمينها في الرمز
@@ -133,5 +148,6 @@ module.exports = {
   verifyToken,
   extractAuthToken,
   requireAuth,
-  requireAdmin
+  requireAdmin,
+  isAuthenticated
 };

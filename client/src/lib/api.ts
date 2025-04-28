@@ -1,9 +1,9 @@
 import axios from 'axios';
 
 // تحديد عنوان API حسب البيئة
-const API_BASE_URL = process.env.NODE_ENV === 'production'
-  ? '/.netlify/functions'
-  : '/api'; // سيتم تحويل هذا عبر إعادة التوجيه في netlify.toml
+const API_BASE_URL = import.meta.env.DEV
+  ? '/api'  // في بيئة التطوير
+  : '/.netlify/functions'; // في بيئة الإنتاج (على Netlify)
 
 // تكوين axios
 const api = axios.create({
