@@ -1,0 +1,88 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    
+    "siteSettings": {
+      // السماح بقراءة إعدادات الموقع للجميع
+      ".read": true,
+      
+      // التعديل فقط للمستخدمين المصادق عليهم الذين لديهم دور مسؤول
+      ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      
+      "passwordProtection": {
+        "enabled": {
+          // يمكن لأي شخص قراءة حالة حماية كلمة المرور
+          ".read": true
+        },
+        "password": {
+          // يمكن فقط للمسؤولين قراءة كلمة المرور
+          ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+        }
+      },
+      
+      "countdownSettings": {
+        // يمكن لأي شخص قراءة إعدادات العد التنازلي
+        ".read": true
+      },
+      
+      "shippingSettings": {
+        // يمكن لأي شخص قراءة إعدادات الشحن
+        ".read": true
+      },
+      
+      "socialMedia": {
+        // يمكن لأي شخص قراءة إعدادات وسائل التواصل الاجتماعي
+        ".read": true
+      }
+    },
+    
+    "authorizedAdminEmails": {
+      // فقط المسؤولين الحاليين يمكنهم الوصول إلى قائمة البريد الإلكتروني للمسؤولين
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+    },
+    
+    "loginAttempts": {
+      // السماح فقط بالكتابة من وظائف Netlify
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      ".write": true
+    },
+    
+    "ipStatus": {
+      // السماح فقط بالكتابة من وظائف Netlify
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      ".write": true
+    },
+    
+    "products": {
+      // يمكن لأي شخص قراءة المنتجات
+      ".read": true,
+      // فقط المسؤولين يمكنهم تحديث المنتجات
+      ".write": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()"
+    },
+    
+    "orders": {
+      // فقط المسؤولين يمكنهم قراءة جميع الطلبات
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      
+      "$orderId": {
+        // يمكن للمستخدم قراءة طلباته الخاصة
+        ".read": "auth != null && data.child('userId').val() === auth.uid",
+        // يمكن للمستخدم إنشاء طلب جديد، ولكن لا يمكنه تعديل الطلبات الموجودة
+        ".write": "auth != null && !data.exists()"
+      }
+    },
+    
+    "users": {
+      // فقط المسؤولين يمكنهم قراءة جميع بيانات المستخدمين
+      ".read": "auth != null && root.child('authorizedAdminEmails').child(auth.token.email).exists()",
+      
+      "$userId": {
+        // يمكن للمستخدم قراءة وتحديث بياناته الخاصة
+        ".read": "auth != null && auth.uid === $userId",
+        ".write": "auth != null && auth.uid === $userId"
+      }
+    }
+  }
+}
