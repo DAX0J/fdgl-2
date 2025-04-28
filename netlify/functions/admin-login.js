@@ -1,4 +1,3 @@
-const { Handler } = require('@netlify/functions');
 const { initializeApp } = require('firebase/app');
 const { getAuth, signInWithEmailAndPassword } = require('firebase/auth');
 const { getDatabase, ref, get, set } = require('firebase/database');
@@ -239,10 +238,19 @@ const handler = async (event, context) => {
   }
 };
 
-exports.handler = Handler(handler, {
-  cors: {
-    origin: '*',  // يجب تغييره للإنتاج للسماح فقط بالمجالات المصرح بها
-    headers: ['Content-Type', 'Authorization'],
-    credentials: true
+// استخدام وظيفة handleCors المحسنة من utils/cors
+const { handleCors } = require('./utils/cors');
+
+exports.handler = async (event, context) => {
+  // معالجة CORS للطلبات المسبقة (OPTIONS)
+  if (event.httpMethod === 'OPTIONS') {
+    return handleCors(event, () => ({
+      statusCode: 204,
+      body: ''
+    }));
   }
-});
+  
+  // معالجة الطلب الأساسي مع دعم CORS
+  const result = await handler(event, context);
+  return handleCors(event, () => result);
+};

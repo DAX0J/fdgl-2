@@ -1,5 +1,5 @@
 import { UAParser } from 'ua-parser-js';
-import { getApiUrl } from './api';
+import api, { getApiUrl } from '@/lib/api';
 
 interface IPStatus {
   banned: boolean;
