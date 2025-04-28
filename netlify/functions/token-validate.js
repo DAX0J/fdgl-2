@@ -1,10 +1,10 @@
-const { Handler } = require('@netlify/functions');
 const { 
   isAuthenticated, 
-  unauthorizedResponse,
+  extractAuthToken,
   verifyToken
 } = require('./utils/auth');
-const { logUnauthorizedAccess } = require('./utils/securityLogs');
+const { handleCors } = require('./utils/cors');
+const { createSuccessResponse, createErrorResponse } = require('./utils/util');
 
 /**
  * وظيفة للتحقق من صحة الرمز المقدم
@@ -20,40 +20,41 @@ const handler = async (event, context) => {
   }
 
   try {
-    // استخراج الرمز من الطلب
-    const authResult = isAuthenticated(event);
+    // التحقق إذا كان المستخدم مصادق عليه
+    const authenticated = isAuthenticated(event);
     
-    if (!authResult.authenticated) {
-      // تسجيل محاولة وصول غير مصرح بها
-      return unauthorizedResponse('غير مصرح به', event, 'token-validation');
+    if (!authenticated) {
+      return createErrorResponse(401, 'غير مصرح به - الجلسة منتهية أو غير صالحة');
     }
     
+    // استخراج معلومات من الرمز
+    const token = extractAuthToken(event);
+    const decoded = token ? verifyToken(token) : null;
+    
     // إرجاع معلومات الرمز المصادق عليه
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        valid: true,
-        user: authResult.user,
-        expires: authResult.expires
-      }),
-      headers: { 'Content-Type': 'application/json' }
-    };
+    return createSuccessResponse({
+      valid: true,
+      user: decoded || {},
+      expires: decoded?.exp || 0
+    });
   } catch (error) {
     console.error('خطأ في التحقق من الرمز:', error);
-    
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ 
-        success: false, 
-        message: 'خطأ في الخادم أثناء التحقق من الرمز'
-      }),
-      headers: { 'Content-Type': 'application/json' }
-    };
+    return createErrorResponse(500, 'خطأ في الخادم أثناء التحقق من الرمز');
   }
 };
 
-// استخدام وحدة CORS المخصصة
-const { applyCors } = require('./utils/cors');
+// تغليف المعالج الأساسي بمعالج CORS
+const wrappedHandler = (event, context) => {
+  // التعامل مع طلبات OPTIONS بشكل خاص
+  if (event.httpMethod === 'OPTIONS') {
+    return handleCors(event, () => ({
+      statusCode: 204,
+      body: ''
+    }));
+  }
+  
+  // معالجة الطلب مع دعم CORS
+  return handleCors(event, () => handler(event, context));
+};
 
-// تصدير المعالج مع CORS متقدم
-exports.handler = applyCors(handler);
+exports.handler = wrappedHandler;

@@ -1,9 +1,11 @@
 const { Handler } = require('@netlify/functions');
 const { 
   isAuthenticated, 
-  getUserFromRequest,
-  unauthorizedResponse
+  extractAuthToken,
+  verifyToken
 } = require('./utils/auth');
+const { handleCors } = require('./utils/cors');
+const { createSuccessResponse, createErrorResponse } = require('./utils/util');
 const { initializeApp } = require('firebase/app');
 const { getDatabase, ref, get } = require('firebase/database');
 
@@ -36,55 +38,72 @@ const handler = async (event, context) => {
   try {
     // التحقق إذا كان المستخدم مصادق عليه
     const authenticated = isAuthenticated(event);
-    if (!authenticated) {
-      return unauthorizedResponse('الجلسة منتهية أو غير صالحة');
-    }
     
-    // الحصول على معلومات المستخدم
-    const user = getUserFromRequest(event);
-    
-    // التحقق إذا كان المستخدم مسؤول
+    // استخراج معلومات المستخدم من الرمز
     let isAdmin = false;
+    let userEmail = null;
     
-    if (user && user.admin === true && user.email) {
-      // التحقق من أن البريد الإلكتروني للمسؤول لا يزال مصرح به
-      const adminEmailsRef = ref(database, 'authorizedAdminEmails');
-      const snapshot = await get(adminEmailsRef);
-      const authorizedEmails = snapshot.val() || {};
-      
-      isAdmin = Object.keys(authorizedEmails).includes(user.email);
+    // إذا كان المستخدم مصادقًا عليه، نتحقق من صلاحياته
+    if (authenticated) {
+      const token = extractAuthToken(event);
+      if (token) {
+        const decoded = verifyToken(token);
+        if (decoded) {
+          userEmail = decoded.email;
+          isAdmin = decoded.isAdmin === true;
+          
+          // التحقق من وجود البريد الإلكتروني في قائمة المسؤولين
+          if (isAdmin && userEmail) {
+            try {
+              const adminEmailsRef = ref(database, 'authorizedAdminEmails');
+              const snapshot = await get(adminEmailsRef);
+              const authorizedEmails = snapshot.val() || {};
+              
+              isAdmin = Object.keys(authorizedEmails).includes(userEmail);
+            } catch (firebaseError) {
+              console.error('خطأ Firebase:', firebaseError);
+              // في حالة خطأ، نعتبر المستخدم غير مسؤول
+              isAdmin = false;
+            }
+          }
+        }
+      }
     }
     
     // الحصول على حالة حماية كلمة المرور
-    const protectionSnapshot = await get(ref(database, 'siteSettings/passwordProtection/enabled'));
-    const isProtectionEnabled = protectionSnapshot.val();
+    let isProtectionEnabled = true; // افتراضيًا
+    try {
+      const protectionSnapshot = await get(ref(database, 'siteSettings/passwordProtection/enabled'));
+      isProtectionEnabled = protectionSnapshot.val() !== false; // إذا كانت null تكون مفعلة
+    } catch (firebaseError) {
+      console.error('خطأ في الحصول على حالة الحماية:', firebaseError);
+      // في حالة الخطأ، نفترض أن الحماية مفعلة
+    }
     
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ 
-        authenticated: true,
-        isAdmin: isAdmin,
-        passwordProtectionEnabled: isProtectionEnabled
-      }),
-      headers: { 'Content-Type': 'application/json' }
-    };
+    return createSuccessResponse({ 
+      authenticated: authenticated,
+      isAdmin: isAdmin,
+      passwordProtectionEnabled: isProtectionEnabled
+    });
   } catch (error) {
     console.error('خطأ في التحقق من حالة المصادقة:', error);
     
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ 
-        error: 'خطأ في الخادم أثناء التحقق من حالة المصادقة'
-      }),
-      headers: { 'Content-Type': 'application/json' }
-    };
+    return createErrorResponse(500, 'خطأ في الخادم أثناء التحقق من حالة المصادقة');
   }
 };
 
-exports.handler = Handler(handler, {
-  cors: {
-    origin: '*',  // يجب تغييره للإنتاج للسماح فقط بالمجالات المصرح بها
-    headers: ['Content-Type', 'Authorization'],
-    credentials: true
+// تغليف المعالج الأساسي بمعالج CORS
+const wrappedHandler = (event, context) => {
+  // التعامل مع طلبات OPTIONS بشكل خاص
+  if (event.httpMethod === 'OPTIONS') {
+    return handleCors(event, () => ({
+      statusCode: 204,
+      body: ''
+    }));
   }
-});
+  
+  // معالجة الطلب مع دعم CORS
+  return handleCors(event, () => handler(event, context));
+};
+
+exports.handler = wrappedHandler;
