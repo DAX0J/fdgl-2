@@ -4,7 +4,9 @@
 const allowedOrigins = [
   'http://localhost:5000',
   'http://localhost:3000',
-  'https://e2-com-10-2024-to-11-2024.netlify.app'
+  'https://e2-com-10-2024-to-11-2024.netlify.app',
+  'https://drpwear.netlify.app',
+  'https://www.drpwear.netlify.app'
 ];
 
 // التحقق ما إذا كان المصدر مسموح به

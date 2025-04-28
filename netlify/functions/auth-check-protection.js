@@ -2,6 +2,7 @@ const { Handler } = require('@netlify/functions');
 const { initializeApp } = require('firebase/app');
 const { getDatabase, ref, get } = require('firebase/database');
 const { isAuthenticated } = require('./utils/auth');
+const { handleCors } = require('./utils/cors');
 
 // Firebase تكوين
 const firebaseConfig = {
@@ -34,17 +35,33 @@ const handler = async (event, context) => {
     const authenticated = isAuthenticated(event);
     
     // الحصول على حالة حماية كلمة المرور من Firebase
-    const protectionSnapshot = await get(ref(database, 'siteSettings/passwordProtection/enabled'));
-    const isProtectionEnabled = protectionSnapshot.val();
-    
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ 
-        enabled: isProtectionEnabled,
-        authenticated: authenticated
-      }),
-      headers: { 'Content-Type': 'application/json' }
-    };
+    try {
+      const protectionSnapshot = await get(ref(database, 'siteSettings/passwordProtection/enabled'));
+      const isProtectionEnabled = protectionSnapshot.val() || false;
+      
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ 
+          enabled: isProtectionEnabled,
+          authenticated: authenticated
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      };
+    } catch (firebaseError) {
+      // لوج الخطأ للتشخيص
+      console.error('Firebase error:', firebaseError);
+      
+      // في حالة حدوث خطأ مع Firebase، نفترض أن الحماية مفعلة لأسباب أمنية
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ 
+          enabled: true,
+          authenticated: authenticated,
+          fallback: true
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      };
+    }
   } catch (error) {
     console.error('خطأ في التحقق من حالة الحماية:', error);
     
@@ -58,10 +75,18 @@ const handler = async (event, context) => {
   }
 };
 
-exports.handler = Handler(handler, {
-  cors: {
-    origin: '*',  // يجب تغييره للإنتاج للسماح فقط بالمجالات المصرح بها
-    headers: ['Content-Type', 'Authorization'],
-    credentials: true
+// تغليف المعالج الأساسي بمعالج CORS
+const wrappedHandler = (event, context) => {
+  // التعامل مع طلبات OPTIONS بشكل خاص
+  if (event.httpMethod === 'OPTIONS') {
+    return handleCors(event, () => ({
+      statusCode: 204,
+      body: ''
+    }));
   }
-});
+  
+  // معالجة الطلب مع دعم CORS
+  return handleCors(event, () => handler(event, context));
+};
+
+exports.handler = wrappedHandler;
