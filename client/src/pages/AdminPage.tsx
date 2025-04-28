@@ -270,25 +270,51 @@ const Dashboard: React.FC = () => {
     const fetchSecurityData = async () => {
       setSecurityLoading(true);
       try {
-        // Get most recent login attempts
-        const loginsSnapshot = await readData('adminLoginAttempts');
+        // Get most recent login attempts from the new security/loginAttempts path
+        const loginsSnapshot = await readData('security/loginAttempts');
         const loginsData = loginsSnapshot.val() || {};
         
         // Convert to array and sort by timestamp (newest first)
-        const loginsArray = Object.entries(loginsData)
-          .map(([id, data]) => ({ id, ...data as any }))
+        const loginsArray = [];
+        
+        // First convert the nested structure (IPs > login attempts) to a flat array
+        Object.entries(loginsData).forEach(([ipKey, attempts]) => {
+          const ip = ipKey.replace(/_/g, '.'); // Convert back from sanitized format
+          
+          // Each IP has multiple login attempts
+          if (attempts && typeof attempts === 'object') {
+            Object.entries(attempts).forEach(([attemptId, attemptData]) => {
+              loginsArray.push({
+                id: attemptId,
+                ip,
+                ...(attemptData as any),
+                // Create deviceInfo from userAgent if not available
+                deviceInfo: (attemptData as any).deviceInfo || {
+                  browser: 'Unknown',
+                  os: 'Unknown'
+                }
+              });
+            });
+          }
+        });
+        
+        // Sort by timestamp and get the 5 most recent
+        const recentLoginAttempts = loginsArray
           .sort((a, b) => b.timestamp - a.timestamp)
-          .slice(0, 5); // Show only the most recent 5
+          .slice(0, 5);
         
-        setRecentLogins(loginsArray);
+        setRecentLogins(recentLoginAttempts);
         
-        // Get banned IPs
-        const bannedIPsSnapshot = await readData('bannedIPs');
-        const bannedIPsData = bannedIPsSnapshot.val() || {};
+        // Get banned IPs from the new security/ipStatus path
+        const ipStatusSnapshot = await readData('security/ipStatus');
+        const ipStatusData = ipStatusSnapshot.val() || {};
         
         // Convert to array and filter only banned IPs
-        const bannedIPsArray = Object.entries(bannedIPsData)
-          .map(([ip, data]) => ({ ip, ...data as any }))
+        const bannedIPsArray = Object.entries(ipStatusData)
+          .map(([ip, data]) => ({ 
+            ip: ip.replace(/_/g, '.'), // Convert the sanitized IP back to normal format for display
+            ...data as any 
+          }))
           .filter(item => item.banned === true);
         
         setBannedIPs(bannedIPsArray);
@@ -403,8 +429,8 @@ const Dashboard: React.FC = () => {
                         {bannedIPs.map((ip) => (
                           <tr key={ip.ip} className="border-b border-gray-800">
                             <td className="py-2">{ip.ip}</td>
-                            <td className="py-2">{ip.failedAttempts}</td>
-                            <td className="py-2">{formatTimestamp(ip.lastAttemptTime)}</td>
+                            <td className="py-2">{ip.failedAttempts || 'Unknown'}</td>
+                            <td className="py-2">{ip.lastUpdated ? formatTimestamp(ip.lastUpdated) : 'Unknown'}</td>
                           </tr>
                         ))}
                       </tbody>
