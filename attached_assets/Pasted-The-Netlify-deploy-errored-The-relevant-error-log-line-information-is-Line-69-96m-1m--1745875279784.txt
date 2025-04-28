@@ -1,0 +1,70 @@
+The Netlify deploy errored. The relevant error log line information is:
+
+Line 69: [96m[1m────────────────────────────────────────────────────────────────[22m[39m
+Line 70: ​
+Line 71: [36m$ npm run build[39m
+Line 72: > rest-express@1.0.0 build
+Line 73: > vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist
+Line 74: [36mvite v5.4.14 [32mbuilding for production...[36m[39m
+Line 75: transforming...
+Line 76: Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+Line 77:   npx update-browserslist-db@latest
+Line 78:   Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Line 79: Failed during stage 'building site': Build script returned non-zero exit code: 2
+Line 80: [32m✓[39m 1649 modules transformed.
+Line 81: [31mx[39m Build failed in 2.09s
+Line 82: [31merror during build:
+Line 83: [31m[vite:load-fallback] Could not load /opt/build/repo/client/src/components/AdminDashboard (imported by client/src/pages/NewA
+Line 84:     at async open (node:internal/fs/promises:633:25)
+Line 85:     at async Object.readFile (node:internal/fs/promises:1237:14)
+Line 86:     at async Object.load (file:///opt/build/repo/node_modules/vite/dist/node/chunks/dep-CHZK6zbr.js:65249:25)
+Line 87:     at async PluginDriver.hookFirstAndGetPlugin (file:///opt/build/repo/node_modules/rollup/dist/es/shared/node-entry.js:20689:2
+Line 88:     at async file:///opt/build/repo/node_modules/rollup/dist/es/shared/node-entry.js:19809:33
+Line 89:     at async Queue.work (file:///opt/build/repo/node_modules/rollup/dist/es/shared/node-entry.js:20899:32)[39m
+Line 90: [91m[1m​[22m[39m
+Line 91: [91m[1m"build.command" failed                                        [22m[39m
+Line 92: [91m[1m────────────────────────────────────────────────────────────────[22m[39m
+Line 93: ​
+Line 94:   [31m[1mError message[22m[39m
+Line 95:   Command failed with exit code 1: npm run build
+Line 96: ​
+Line 97:   [31m[1mError location[22m[39m
+Line 98:   In build.command from netlify.toml:
+Line 99:   npm run build
+Line 100: ​
+Line 101:   [31m[1mResolved config[22m[39m
+Line 102:   build:
+Line 103:     command: npm run build
+Line 104:     commandOrigin: config
+Line 105:     environment:
+Line 106:       - VITE_FIREBASE_API_KEY
+Line 107:       - VITE_FIREBASE_APP_ID
+Line 116:   functions:
+Line 117:     '*':
+Line 118:       external_node_modules:
+Line 119:         - express
+Line 120:         - firebase
+Line 121:         - firebase-admin
+Line 122:       node_bundler: esbuild
+Line 123:   functionsDirectory: /opt/build/repo/netlify/functions
+Line 124:   redirects:
+Line 125:     - from: /api/*
+      status: 200
+      to: /.netlify/functions/:splat
+    - from: /*
+      status: 200
+      to: /index.html
+Line 126: Build failed due to a user error: Build script returned non-zero exit code: 2
+Line 127: Failing build: Failed to build site
+Line 128: Finished processing build request in 28.768s
+
+Netlify has analyzed the error and provided the following guidance:
+
+**Diagnosis:**
+The build failure is caused by Vite being unable to load a specific file `src/components/AdminDashboard` during the build process.
+
+**Solution:**
+1. Verify that the file `src/components/AdminDashboard` is present in the repository and committed to the Git repository.
+2. If the file is present, add `src/components/AdminDashboard` to the `build.rollupOptions.external` configuration in your `vite.config.js` file to exclude it from the Vite build process.
+
+By following these steps, you should be able to resolve the build failure.
