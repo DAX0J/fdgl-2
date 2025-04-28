@@ -128,10 +128,8 @@ const handler = async (event, context) => {
   }
 };
 
-exports.handler = Handler(handler, {
-  cors: {
-    origin: '*',  // يجب تغييره للإنتاج للسماح فقط بالمجالات المصرح بها
-    headers: ['Content-Type', 'Authorization'],
-    credentials: true
-  }
-});
+// استخدام وحدة CORS المخصصة
+const { applyCors } = require('./utils/cors');
+
+// تصدير المعالج مع CORS متقدم
+exports.handler = applyCors(handler);
